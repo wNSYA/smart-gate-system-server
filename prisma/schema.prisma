@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Users {
+  id            Int      @id @default(autoincrement())
+  name          String
+  
+  // Using @map keeps the DB column as "card_number" 
+  // but lets you use the cleaner "cardNumber" in NestJS
+  cardNumber    Int      @unique 
+  isCardValid   Boolean  @default(true)
+  
+  // Biometric & Access Methods
+  fingerprint   Boolean  @default(false)
+  card          Boolean  @default(false)
+  face          Boolean  @default(false)
+  irises        Boolean  @default(false)
+  voiceprints   Boolean  @default(false)
+  
+  // Location/Department info
+  tenant        String
+  lantaiKerja   Int      
+
+  // Highly recommended for security systems to track when a profile was made/changed
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // If you are connecting this to the AccessLog from earlier, you'd add:
+  // logs       EntryLog[]
+}
