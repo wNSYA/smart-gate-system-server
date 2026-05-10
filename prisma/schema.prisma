@@ -1,8 +1,13 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+// Note: Prisma enforces string lengths via @db.VarChar(), but numerical min/max validations 
+// (like maxOpenDoorTime @max: 255) must be handled at the application/validation layer.
+
+// Changes :
+// UserType di Employee : UserTypeEmployee
 
 generator client {
   provider = "prisma-client-js"
@@ -13,30 +18,152 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Users {
-  id            Int      @id @default(autoincrement())
-  name          String
-  
-  // Using @map keeps the DB column as "card_number" 
-  // but lets you use the cleaner "cardNumber" in NestJS
-  cardNumber    Int      @unique 
-  isCardValid   Boolean  @default(true)
-  
-  // Biometric & Access Methods
-  fingerprint   Boolean  @default(false)
-  card          Boolean  @default(false)
-  face          Boolean  @default(false)
-  irises        Boolean  @default(false)
-  voiceprints   Boolean  @default(false)
-  
-  // Location/Department info
-  tenant        String
-  lantaiKerja   Int      
 
-  // Highly recommended for security systems to track when a profile was made/changed
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+//==========================================================
+// ENDPOINT /ISAPI/AccessControl/UserInfo/Search?format=json
+//==========================================================
 
-  // If you are connecting this to the AccessLog from earlier, you'd add:
-  // logs       EntryLog[]
+model employee {
+  employeeNo          String             @id @db.VarChar(32) // Using employeeNo as the Primary Key
+  name                String             @db.VarChar(128)
+  userTypeEmployee    UserType           @default(normal)
+  onlyVerify          Boolean            @default(false)
+  closeDelayEnabled   Boolean            @default(false)
+  
+  // Flattened 'Valid' Object
+  validEnable         Boolean            @default(true)
+  validBeginTime      DateTime
+  validEndTime        DateTime
+  validTimeType       String             @default("local")
+
+  belongGroup         String             @db.VarChar(32)
+  password            String             @db.VarChar(255)
+  doorRight           String             @db.VarChar(1)
+
+  // Numeric stats
+  maxOpenDoorTime     Int                @default(0) // App logic should enforce max 255
+  openDoorTime        Int                @default(0) // App logic should enforce max 255
+  roomNumber          Int                @default(0) // App logic should enforce max 9999
+  floorNumber         Int                @default(0) // App logic should enforce max 999
+  
+  localUIRight        Boolean            @default(false)
+  gender              Gender             @default(unknown)
+  numOfCard           Int                @default(0)
+  numOfFP             Int                @default(0)
+  numOfFace           Int                @default(0)
+
+}
+
+// --- Enums extracted from metadata ---
+
+enum UserTypeEmployee {
+  normal
+  visitor
+  blackList
+  custom1
+  custom2
+  custom3
+  custom4
+  custom5
+}
+
+enum Gender {
+  male
+  female
+  unknown
+}
+
+enum UserVerifyMode {
+  cardAndPw
+  card
+  fp
+  fpAndPw
+  fpOrCard
+  fpAndCard
+  fpAndCardAndPw
+  faceOrFpOrCardOrPw
+  faceAndFp
+  faceAndPw
+  faceAndCard
+  face
+  fpOrPw
+  faceAndFpAndCard
+  faceAndPwAndFp
+  fpOrface
+  cardOrfaceOrPw
+  cardOrFace
+  cardOrFaceOrFp
+  faceOrPw
+}
+
+
+//======================================================
+// /ISAPI/AccessControl/AcsEvent?format=json
+//======================================================
+
+model eventRecord {
+  // Base fields present in every event
+  serialNo           BigInt       @id // Using BigInt because metadata max is 3,000,000,000
+  major              Int          // Values: 0, 1, 2, 3, 5
+  minor              Int
+  time               DateTime
+  doorNo             Int
+
+  // Optional fields that only appear in specific event types
+  cardType           Int?         // Values: 1, 4, 5, 6
+  name               String?      @db.VarChar(128)
+  cardReaderNo       Int?
+  employeeNoString   String?      @db.VarChar(32)
+  userType           UserType?
+  currentVerifyMode  VerifyMode?
+  mask               MaskStatus?
+  cardNo             String?      @db.VarChar(20)
+
+  // Flattened FaceRect fields (stored as Floats)
+  faceRectHeight     Float?
+  faceRectWidth      Float?
+  faceRectX          Float?
+  faceRectY          Float?
+  
+  @@index([time]) // Adding an index on time since logs are usually queried by date
+  @@index([employeeNoString])
+}
+
+// --- Enums filtered strictly to the metadata provided for the JSON fields ---
+
+enum UserType {
+  normal
+  visitor
+  blackList
+  administrators
+}
+
+enum MaskStatus {
+  unknown
+  yes
+  no
+}
+
+enum VerifyMode {
+  cardAndPw
+  card
+  fp
+  fpAndPw
+  fpOrCard
+  fpAndCard
+  fpAndCardAndPw
+  faceOrFpOrCardOrPw
+  faceAndFp
+  faceAndPw
+  faceAndCard
+  face
+  fpOrPw
+  faceAndFpAndCard
+  faceAndPwAndFp
+  fpOrface
+  cardOrfaceOrPw
+  cardOrFace
+  cardOrFaceOrFp
+  cardOrFpOrPw
+  faceOrPw
 }
