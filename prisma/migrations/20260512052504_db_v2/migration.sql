@@ -1,9 +1,3 @@
-/*
-  Warnings:
-
-  - You are about to drop the `Users` table. If the table is not empty, all the data it contains will be lost.
-
-*/
 -- CreateEnum
 CREATE TYPE "UserTypeEmployee" AS ENUM ('normal', 'visitor', 'blackList', 'custom1', 'custom2', 'custom3', 'custom4', 'custom5');
 
@@ -21,12 +15,6 @@ CREATE TYPE "MaskStatus" AS ENUM ('unknown', 'yes', 'no');
 
 -- CreateEnum
 CREATE TYPE "VerifyMode" AS ENUM ('cardAndPw', 'card', 'fp', 'fpAndPw', 'fpOrCard', 'fpAndCard', 'fpAndCardAndPw', 'faceOrFpOrCardOrPw', 'faceAndFp', 'faceAndPw', 'faceAndCard', 'face', 'fpOrPw', 'faceAndFpAndCard', 'faceAndPwAndFp', 'fpOrface', 'cardOrfaceOrPw', 'cardOrFace', 'cardOrFaceOrFp', 'cardOrFpOrPw', 'faceOrPw');
-
--- DropTable
-DROP TABLE "Users";
-
--- DropEnum
-DROP TYPE "Role";
 
 -- CreateTable
 CREATE TABLE "employee" (
@@ -51,25 +39,26 @@ CREATE TABLE "employee" (
     "numOfCard" INTEGER NOT NULL DEFAULT 0,
     "numOfFP" INTEGER NOT NULL DEFAULT 0,
     "numOfFace" INTEGER NOT NULL DEFAULT 0,
+    "last_synced_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "employee_pkey" PRIMARY KEY ("employeeNo")
 );
 
 -- CreateTable
 CREATE TABLE "eventRecord" (
-    "serialNo" BIGINT NOT NULL,
+    "serialNo" VARCHAR(128) NOT NULL,
     "major" INTEGER NOT NULL,
     "minor" INTEGER NOT NULL,
     "time" TIMESTAMP(3) NOT NULL,
-    "doorNo" INTEGER NOT NULL,
+    "doorNo" INTEGER,
     "cardType" INTEGER,
-    "name" VARCHAR(128),
+    "name" VARCHAR(255),
     "cardReaderNo" INTEGER,
     "employeeNoString" VARCHAR(32),
     "userType" "UserType",
     "currentVerifyMode" "VerifyMode",
     "mask" "MaskStatus",
-    "cardNo" VARCHAR(20),
+    "cardNo" VARCHAR(255),
     "faceRectHeight" DOUBLE PRECISION,
     "faceRectWidth" DOUBLE PRECISION,
     "faceRectX" DOUBLE PRECISION,

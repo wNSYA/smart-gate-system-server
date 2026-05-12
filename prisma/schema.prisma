@@ -41,16 +41,18 @@ model employee {
   doorRight           String             @db.VarChar(1)
 
   // Numeric stats
-  maxOpenDoorTime     Int                @default(0) // App logic should enforce max 255
-  openDoorTime        Int                @default(0) // App logic should enforce max 255
-  roomNumber          Int                @default(0) // App logic should enforce max 9999
-  floorNumber         Int                @default(0) // App logic should enforce max 999
+  maxOpenDoorTime     Int                @default(0) 
+  openDoorTime        Int                @default(0) 
+  roomNumber          Int                @default(0) 
+  floorNumber         Int                @default(0) 
   
   localUIRight        Boolean            @default(false)
   gender              Gender             @default(unknown)
   numOfCard           Int                @default(0)
   numOfFP             Int                @default(0)
   numOfFace           Int                @default(0)
+  
+  last_synced_at      DateTime           @default(now())
 
 }
 
@@ -103,21 +105,21 @@ enum UserVerifyMode {
 
 model eventRecord {
   // Base fields present in every event
-  serialNo           BigInt       @id // Using BigInt because metadata max is 3,000,000,000
+  serialNo           String       @id @db.VarChar(128) // Using BigInt because metadata max is 3,000,000,000
   major              Int          // Values: 0, 1, 2, 3, 5
   minor              Int
   time               DateTime
-  doorNo             Int
+  doorNo             Int?
 
   // Optional fields that only appear in specific event types
   cardType           Int?         // Values: 1, 4, 5, 6
-  name               String?      @db.VarChar(128)
+  name               String?      @db.VarChar(255)
   cardReaderNo       Int?
   employeeNoString   String?      @db.VarChar(32)
   userType           UserType?
   currentVerifyMode  VerifyMode?
   mask               MaskStatus?
-  cardNo             String?      @db.VarChar(20)
+  cardNo             String?      @db.VarChar(255)
 
   // Flattened FaceRect fields (stored as Floats)
   faceRectHeight     Float?
