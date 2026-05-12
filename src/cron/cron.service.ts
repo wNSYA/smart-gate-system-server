@@ -36,7 +36,7 @@ export class CronService {
     this.logger.log('[10s Cron] Starting scheduled Event log fetch...');
 
     const now = dayjs();
-    const startTimeStr = now.subtract(30, 'second').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.subtract(6, 'hour').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     const sessionSearchID = "sync_" + randomUUID();
@@ -76,7 +76,8 @@ export class CronService {
     this.logger.log('[1m Cron] Starting scheduled Employee data sync...');
 
     const sessionSearchID = "sync_" + randomUUID();
-    const iv = crypto.randomBytes(16).toString('hex');
+    const iv = this.configService.getOrThrow<string>('IV_HEX');
+    // const iv = crypto.randomBytes(16).toString('hex');
 
     const employeeTask = {
       route: '/ISAPI/AccessControl/UserInfo/Search', 
@@ -274,15 +275,14 @@ private async saveToDatabase(syncType: string, fetchedItems: any[]) {
           faceRectY: item.FaceRect?.y,
         };
 
-        // Note: serialNo is a BigInt in Prisma. 
-        // We cast the incoming number to BigInt to prevent type errors.
-        const serialNoBigInt = BigInt(item.serialNo);
+// Convert whatever the device sends (number, encrypted string, etc.) safely to a String
+        const serialNoString = String(item.serialNo);
 
         return this.prisma.eventRecord.upsert({
-          where: { serialNo: serialNoBigInt },
+          where: { serialNo: serialNoString }, // <-- Use the string here
           update: mappedData,
           create: {
-            serialNo: serialNoBigInt,
+            serialNo: serialNoString,          // <-- And use it here!
             ...mappedData,
           },
         });

@@ -105,21 +105,21 @@ enum UserVerifyMode {
 
 model eventRecord {
   // Base fields present in every event
-  serialNo           BigInt       @id // Using BigInt because metadata max is 3,000,000,000
+  serialNo           String       @id @db.VarChar(128) // Using BigInt because metadata max is 3,000,000,000
   major              Int          // Values: 0, 1, 2, 3, 5
   minor              Int
   time               DateTime
-  doorNo             Int
+  doorNo             Int?
 
   // Optional fields that only appear in specific event types
   cardType           Int?         // Values: 1, 4, 5, 6
-  name               String?      @db.VarChar(128)
+  name               String?      @db.VarChar(255)
   cardReaderNo       Int?
   employeeNoString   String?      @db.VarChar(32)
   userType           UserType?
   currentVerifyMode  VerifyMode?
   mask               MaskStatus?
-  cardNo             String?      @db.VarChar(20)
+  cardNo             String?      @db.VarChar(255)
 
   // Flattened FaceRect fields (stored as Floats)
   faceRectHeight     Float?
