@@ -1,2 +1,0 @@
--- AlterTable
-ALTER TABLE "employee" ADD COLUMN     "last_synced_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
