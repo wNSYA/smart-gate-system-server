@@ -2,17 +2,20 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { PrismaModule } from './prisma/prisma.module';
+import { CronModule } from './cron/cron.module';
+import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
-    // Load environment variables globally
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
+    ConfigModule.forRoot({ isGlobal: true, }),
+    ScheduleModule.forRoot(), 
+    PrismaModule, 
     AuthModule,
-    PrismaModule,
+    CronModule
   ],
   controllers: [AppController],
   providers: [AppService],
