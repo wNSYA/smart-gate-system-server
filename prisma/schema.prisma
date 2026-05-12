@@ -37,7 +37,7 @@ model employee {
   validTimeType       String             @default("local")
 
   belongGroup         String             @db.VarChar(32)
-  password            String             @db.VarChar(255)
+  password            String             @db.VarChar(8)
   doorRight           String             @db.VarChar(1)
 
   // Numeric stats
@@ -54,6 +54,19 @@ model employee {
   
   last_synced_at      DateTime           @default(now())
 
+}
+
+model UserAuth {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  password  String   @db.VarChar(255)
+  role      UserRole @default(SECURITY)
+  createdAt DateTime @default(now())
+}
+
+enum UserRole {
+  ADMIN
+  SECURITY
 }
 
 // --- Enums extracted from metadata ---

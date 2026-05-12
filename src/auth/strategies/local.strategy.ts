@@ -7,12 +7,12 @@ import { AuthService } from '../auth.service';
 export class LocalStrategy extends PassportStrategy(Strategy) {
   constructor(private authService: AuthService) {
     super({
-      usernameField: 'employeeNo', // Menggunakan employeeNo sebagai pengganti username
+      usernameField: 'name', // Menggunakan name (username) dari tabel UserAuth
     });
   }
 
-  async validate(employeeNo: string, pass: string): Promise<any> {
-    const user = await this.authService.validateUser(employeeNo, pass);
+  async validate(name: string, pass: string): Promise<any> {
+    const user = await this.authService.validateUser(name, pass);
     if (!user) {
       throw new UnauthorizedException('NIP atau Password salah');
     }

@@ -1,38 +1,43 @@
-import { PrismaClient, UserType, Gender } from '@prisma/client';
+import { PrismaClient, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const password = 'adminpassword123';
-  const hashedPassword = await bcrypt.hash(password, 10);
+  // 1. Siapkan Password Admin
+  const adminPassword = 'adminpassword123';
+  const hashedAdminPassword = await bcrypt.hash(adminPassword, 10);
 
-  // Menambahkan data awal untuk tabel employee
-  // Menghapus 'lantaiKerja' karena tidak ada di schema baru
-  const admin = await prisma.employee.upsert({
-    where: { employeeNo: 'ADMIN001' },
+  // 2. Siapkan Password Security
+  const securityPassword = 'securitypassword123';
+  const hashedSecurityPassword = await bcrypt.hash(securityPassword, 10);
+
+  // 3. Masukkan data Admin ke tabel UserAuth
+  await prisma.userAuth.upsert({
+    where: { name: 'admin_pusat' },
     update: {},
     create: {
-      employeeNo: 'ADMIN001',
-      name: 'Super Admin',
-      password: hashedPassword,
-      userTypeEmployee: UserType.normal,
-      belongGroup: '001',
-      doorRight: '1',
-      validEnable: true,
-      validBeginTime: new Date(),
-      validEndTime: new Date(new Date().setFullYear(new Date().getFullYear() + 10)),
-      validTimeType: 'local',
-      gender: Gender.male,
-      roomNumber: 101,
-      floorNumber: 1,
+      name: 'admin_pusat',
+      password: hashedAdminPassword,
+      role: UserRole.ADMIN,
     },
   });
 
-  console.log('--- Seed Data Employee Berhasil ---');
-  console.log('Employee No: ADMIN001');
-  console.log('Password: adminpassword123');
-  console.log('-----------------------------------');
+  // 4. Masukkan data Security ke tabel UserAuth
+  await prisma.userAuth.upsert({
+    where: { name: 'security_gate' },
+    update: {},
+    create: {
+      name: 'security_gate',
+      password: hashedSecurityPassword,
+      role: UserRole.SECURITY,
+    },
+  });
+
+  console.log('--- Seed UserAuth Berhasil ---');
+  console.log('Admin    -> User: admin_pusat, Pass: adminpassword123');
+  console.log('Security -> User: security_gate, Pass: securitypassword123');
+  console.log('------------------------------');
 }
 
 main()

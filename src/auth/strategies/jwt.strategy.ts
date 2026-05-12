@@ -16,7 +16,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     // Hasil return ini akan otomatis masuk ke req.user
     return { 
       id: payload.sub, 
-      employeeNo: payload.employeeNo, 
+      name: payload.name, 
       role: payload.role 
     };
   }
