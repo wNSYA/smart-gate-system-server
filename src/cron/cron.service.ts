@@ -36,7 +36,7 @@ export class CronService {
     this.logger.log('[10s Cron] Starting scheduled Event log fetch...');
 
     const now = dayjs();
-    const startTimeStr = now.subtract(6, 'hour').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     const sessionSearchID = "sync_" + randomUUID();
