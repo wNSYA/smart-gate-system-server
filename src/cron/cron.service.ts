@@ -11,7 +11,6 @@ import * as https from 'https';
 import dayjs from 'dayjs';
 import { randomUUID } from 'crypto';
 
-
 @Injectable()
 export class CronService {
   private readonly httpsAgent: https.Agent | undefined;
@@ -31,10 +30,8 @@ export class CronService {
   // ====================================================================
   // 1. EVENT SYNC (Runs every 10 seconds)
   // ====================================================================
-@Cron(CronExpression.EVERY_10_SECONDS)
+  @Cron(CronExpression.EVERY_10_SECONDS)
   async handleEventSync() {
-    this.logger.log('[10s Cron] Starting scheduled Event log fetch...');
-
     const now = dayjs();
     const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
@@ -44,21 +41,17 @@ export class CronService {
 
     const eventTask = {
       route: '/ISAPI/AccessControl/AcsEvent', 
-      params: { 
-        format: 'json',
-        security: 1,
-        iv: iv
-      },
+      params: { format: 'json', security: 1, iv: iv },
       data: {
         AcsEventCond: {
-          "searchID": sessionSearchID,
-          "searchResultPosition": 0,
-          "maxResults": 30,
-          "major": 0,
-          "minor": 0,
-          "startTime": startTimeStr,
-          "endTime": endTimeStr,
-          "timeReverseOrder": true
+          searchID: sessionSearchID,
+          searchResultPosition: 0,
+          maxResults: 30,
+          major: 0,
+          minor: 0,
+          startTime: startTimeStr,
+          endTime: endTimeStr,
+          timeReverseOrder: true
         }
       },
       syncType: 'eventRecord',
@@ -73,23 +66,19 @@ export class CronService {
   // ====================================================================
   @Cron(CronExpression.EVERY_MINUTE)
   async handleEmployeeSync() {
-    this.logger.log('[1m Cron] Starting scheduled Employee data sync...');
-
     const sessionSearchID = "sync_" + randomUUID();
     const iv = this.configService.getOrThrow<string>('IV_HEX');
-    // const iv = crypto.randomBytes(16).toString('hex');
 
     const employeeTask = {
       route: '/ISAPI/AccessControl/UserInfo/Search', 
-      params: { 
-        format: 'json',
-        security: 1,
-        iv: iv
+      params: { format: 'json', security: 1, iv: iv },
+      data: {
+        UserInfoSearchCond: {
+          searchID: sessionSearchID,
+          maxResults: 30,
+          searchResultPosition: 0
+        }
       },
-      data: {"UserInfoSearchCond":{
-        "searchID":sessionSearchID,
-        "maxResults":30,
-        "searchResultPosition":0}},
       syncType: 'employee',
       dataPath: 'UserInfoSearch.UserInfo'
     };
@@ -100,70 +89,48 @@ export class CronService {
   // ====================================================================
   // PROCESSING ENGINE
   // ====================================================================
-private async processSingleTask(task: any) {
+  private async processSingleTask(task: any) {
     try {
-      this.logger.log(`-> Fetching: ${task.route}`);
-      
       let allFetchedItems: any[] = [];
       let currentPosition = 0;
       let hasMore = true;
 
-      // --- PAGINATION LOOP ---
       while (hasMore) {
-        // 1. Dynamically find the root key of the payload (e.g., 'AcsEventCond' or 'UserInfoSearchCond')
-        // and inject the current position before making the request.
         const payloadRootKey = Object.keys(task.data)[0];
         if (payloadRootKey && task.data[payloadRootKey]) {
           task.data[payloadRootKey].searchResultPosition = currentPosition;
         }
 
-        // 2. Fetch the data chunk
         const result = await this.executeDigestTask(task.route, task.params, task.data);
-
-        // 3. Extract the array of items using your magic dataPath
         const items = task.dataPath.split('.').reduce((obj: any, key: string) => obj?.[key], result);
 
-        // 4. If we got items, add them to our master list
         if (Array.isArray(items) && items.length > 0) {
           allFetchedItems = allFetchedItems.concat(items);
         }
 
-        // 5. Check if the API says there is MORE data
-        // We look at the parent object of the array (e.g., result.AcsEvent)
         const parentPath = task.dataPath.split('.').slice(0, -1).join('.');
         const parentObj = parentPath.split('.').reduce((obj: any, key: string) => obj?.[key], result);
 
         if (parentObj && parentObj.responseStatusStrg === 'MORE') {
-          // Increment the position by however many items we just received (usually 30)
           currentPosition += (parentObj.numOfMatches || items?.length || 30);
-          this.logger.log(`...API returned 'MORE'. Fetching next page starting at position ${currentPosition}...`);
+          this.logger.debug(`[${task.syncType}] Fetching next page, pos: ${currentPosition}`);
         } else {
-          // We reached the end! Break the loop.
           hasMore = false; 
         }
       }
-      // --- END PAGINATION LOOP ---
 
-      // 6. Finally, route the massive combined array to Prisma
       if (allFetchedItems.length > 0) {
-        this.logger.log(`Successfully fetched a total of ${allFetchedItems.length} items for ${task.syncType}. Routing to database...`);
         await this.saveToDatabase(task.syncType, allFetchedItems);
       } else {
-        this.logger.warn(`No data found for ${task.route} in this time window.`);
+        this.logger.debug(`[${task.syncType}] No new data found.`);
       }
       
     } catch (error: any) {
-      this.logger.error(`Failed to process ${task.route}.`);
-      
-      if (error.response) {
-        this.logger.error(`API Error Status: ${error.response.status}`);
-      } else {
-        this.logger.error(`Code Error: ${error.message}`);
-      }
+      this.logger.error(`[${task.syncType}] Sync fail: ${error.response?.status || error.message}`);
     }
   }
 
-private async saveToDatabase(syncType: string, fetchedItems: any[]) {
+  private async saveToDatabase(syncType: string, fetchedItems: any[]) {
     const syncStartTime = new Date();
 
     try {
@@ -174,11 +141,11 @@ private async saveToDatabase(syncType: string, fetchedItems: any[]) {
         await this.syncEvents(fetchedItems);
       } 
       else {
-        this.logger.warn(`Unknown syncType: ${syncType}. Skipping database save.`);
+        this.logger.warn(`Unknown syncType: ${syncType}`);
       }
     } catch (error) {
-      this.logger.error(`Database save failed for ${syncType}:`, error);
-      throw error; // Rethrow so the main loop can catch it and log it
+      this.logger.error(`[${syncType}] DB save fail:`, error);
+      throw error; 
     }
   }
 
@@ -186,28 +153,20 @@ private async saveToDatabase(syncType: string, fetchedItems: any[]) {
   // 1. EMPLOYEE SYNC (Mark & Sweep Strategy)
   // ====================================================================
   private async syncEmployees(items: any[], syncStartTime: Date) {
-    this.logger.log(`Upserting ${items.length} employees...`);
-
-    // 1. Mark Phase (Upsert)
     await this.prisma.$transaction(
       items.map((item) => {
-        // Map the nested JSON to your flat Prisma Schema
         const mappedData = {
           name: item.name || '',
           userTypeEmployee: item.userType || 'normal',
           onlyVerify: item.onlyVerify ?? false,
           closeDelayEnabled: item.closeDelayEnabled ?? false,
-          
-          // Flatten the 'Valid' object safely
           validEnable: item.Valid?.enable ?? true,
           validBeginTime: new Date(item.Valid?.beginTime || '2000-01-01T00:00:00Z'),
           validEndTime: new Date(item.Valid?.endTime || '2037-12-31T23:59:59Z'),
           validTimeType: item.Valid?.timeType || 'local',
-
           belongGroup: item.belongGroup || '',
           password: item.password || '',
           doorRight: item.doorRight || '',
-          
           maxOpenDoorTime: item.maxOpenDoorTime || 0,
           openDoorTime: item.openDoorTime || 0,
           roomNumber: item.roomNumber || 0,
@@ -223,42 +182,29 @@ private async saveToDatabase(syncType: string, fetchedItems: any[]) {
         return this.prisma.employee.upsert({
           where: { employeeNo: item.employeeNo },
           update: mappedData,
-          create: {
-            employeeNo: item.employeeNo,
-            ...mappedData,
-          },
+          create: { employeeNo: item.employeeNo, ...mappedData },
         });
       })
     );
 
-
-    // 2. Sweep Phase (Delete obsolete employees)
-    // UNCOMMENT THIS once you add `last_synced_at` to your employee model
     const { count: deletedCount } = await this.prisma.employee.deleteMany({
       where: { last_synced_at: { lt: syncStartTime } },
     });
-    this.logger.log(`Removed ${deletedCount} obsolete employees.`);
 
-
+    this.logger.log(`[Employee Sync] ${items.length} upserted, ${deletedCount} removed.`);
   }
 
   // ====================================================================
   // 2. EVENT RECORD SYNC (Append/Upsert Only)
   // ====================================================================
   private async syncEvents(items: any[]) {
-    this.logger.log(`Upserting ${items.length} event records...`);
-
-    // No "Sweep" phase here. We want to keep all historical events.
     await this.prisma.$transaction(
       items.map((item) => {
-        // Map the nested JSON to your flat Prisma Schema
         const mappedData = {
           major: item.major,
           minor: item.minor,
-          time: new Date(item.time), // Convert ISO string to JS Date
+          time: new Date(item.time),
           doorNo: item.doorNo,
-          
-          // Optional fields
           cardType: item.cardType,
           name: item.name,
           cardReaderNo: item.cardReaderNo,
@@ -267,35 +213,26 @@ private async saveToDatabase(syncType: string, fetchedItems: any[]) {
           currentVerifyMode: item.currentVerifyMode,
           mask: item.mask,
           cardNo: item.cardNo,
-
-          // Flatten the 'FaceRect' object safely
           faceRectHeight: item.FaceRect?.height,
           faceRectWidth: item.FaceRect?.width,
           faceRectX: item.FaceRect?.x,
           faceRectY: item.FaceRect?.y,
         };
 
-// Convert whatever the device sends (number, encrypted string, etc.) safely to a String
         const serialNoString = String(item.serialNo);
 
         return this.prisma.eventRecord.upsert({
-          where: { serialNo: serialNoString }, // <-- Use the string here
+          where: { serialNo: serialNoString }, 
           update: mappedData,
-          create: {
-            serialNo: serialNoString,          // <-- And use it here!
-            ...mappedData,
-          },
+          create: { serialNo: serialNoString, ...mappedData },
         });
       })
     );
+
+    this.logger.log(`[Event Sync] ${items.length} upserted.`);
   }
 
-
-
-
-
-
-async executeDigestTask(route: string, params?: any, data?: any) {
+  async executeDigestTask(route: string, params?: any, data?: any) {
     const baseUrl = this.configService.get<string>('API_URL');
     const username = this.configService.get<string>('API_USERNAME');
     const password = this.configService.get<string>('API_PASSWORD');
@@ -305,34 +242,21 @@ async executeDigestTask(route: string, params?: any, data?: any) {
       throw new HttpException('Missing API configuration in .env', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    // 2. Safely combine the Base URL and the Route
-    // This removes any trailing slash from the base URL and ensures the route starts with a slash
     const cleanBaseUrl = baseUrl.replace(/\/$/, '');
     const cleanRoute = route.startsWith('/') ? route : `/${route}`;
     const fullUrl = `${cleanBaseUrl}${cleanRoute}`;
 
-    const finalParams = params || {};
-    const finalData = data || {};
-
     try {
-      this.logger.log(`Executing Cron API Request to ${cleanRoute}...`);
-      
-      // 3. Pass fullUrl into your sendRequest
-      return await this.sendRequest(fullUrl, method, finalParams, finalData);
-      
+      return await this.sendRequest(fullUrl, method, params || {}, data || {});
     } catch (error: any) {
       if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
-        this.logger.log('Intercepted 401. Calculating Digest Auth...');
-        
+        this.logger.debug(`[Digest Auth] Intercepted 401 for ${cleanRoute}`);
         const authHeader = error.response.headers['www-authenticate'];
-        
-        // 4. Pass fullUrl into your Digest generator
         const digestHeader = this.generateDigestAuth(authHeader, fullUrl, method, username, password);
 
-        return await this.sendRequest(fullUrl, method, finalParams, finalData, digestHeader);
+        return await this.sendRequest(fullUrl, method, params || {}, data || {}, digestHeader);
       }
 
-      this.logger.error('Cron API Request failed', error.response?.data || error.message);
       throw new HttpException(error.response?.data || 'External API Error', error.response?.status || 500);
     }
   }
@@ -342,14 +266,7 @@ async executeDigestTask(route: string, params?: any, data?: any) {
     if (authHeader) headers['Authorization'] = authHeader;
 
     const response = await firstValueFrom(
-      this.httpService.request({
-        url,
-        method,
-        data,
-        params,
-        headers,
-        httpsAgent: this.httpsAgent,
-      }),
+      this.httpService.request({ url, method, data, params, headers, httpsAgent: this.httpsAgent })
     );
     return response.data;
   }
@@ -365,15 +282,11 @@ async executeDigestTask(route: string, params?: any, data?: any) {
     const ha1 = md5(`${username}:${realm}:${password}`);
     const ha2 = md5(`${method}:${uri}`);
 
-    let response: string;
     const nc = '00000001'; 
     const cnonce = crypto.randomBytes(8).toString('hex');
-
-    if (qop === 'auth' || qop === 'auth-int') {
-      response = md5(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`);
-    } else {
-      response = md5(`${ha1}:${nonce}:${ha2}`);
-    }
+    const response = (qop === 'auth' || qop === 'auth-int') 
+      ? md5(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`) 
+      : md5(`${ha1}:${nonce}:${ha2}`);
 
     let digest = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}"`;
     if (qop) digest += `, qop=${qop}, nc=${nc}, cnonce="${cnonce}"`;

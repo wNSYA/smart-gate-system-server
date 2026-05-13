@@ -6,13 +6,13 @@ async function bootstrap() {
 
   app.enableCors({
     origin: [
-      'http://localhost:5173',                 // Your local Vite dev server
+      'http://localhost:3000',                 // Your local dev server
       'https://iip.itb.ac.id'       // Your future production URL
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3001);
 }
 bootstrap();
