@@ -11,6 +11,8 @@ import * as https from 'https';
 import dayjs from 'dayjs';
 import { randomUUID } from 'crypto';
 
+import { SocketGateway } from '../socket/socket.gateway';
+
 @Injectable()
 export class CronService {
   private readonly httpsAgent: https.Agent | undefined;
@@ -20,6 +22,7 @@ export class CronService {
     private readonly prisma: PrismaService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly socketGateway: SocketGateway,
   ) {
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
     if (!isProduction) {
@@ -87,6 +90,15 @@ export class CronService {
   }
 
   // ====================================================================
+  // 3. MIDNIGHT RESET SIGNAL (Runs at 00:00 every day)
+  // ====================================================================
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleMidnightReset() {
+    this.logger.log('Midnight reached. Sending reset signal to clients.');
+    this.socketGateway.emitEventUpdate({ type: 'MIDNIGHT_RESET' });
+  }
+
+  // ====================================================================
   // PROCESSING ENGINE
   // ====================================================================
   private async processSingleTask(task: any) {
@@ -136,9 +148,11 @@ export class CronService {
     try {
       if (syncType === 'employee') {
         await this.syncEmployees(fetchedItems, syncStartTime);
+        this.socketGateway.emitEmployeeUpdate({ count: fetchedItems.length });
       } 
       else if (syncType === 'eventRecord') {
         await this.syncEvents(fetchedItems);
+        this.socketGateway.emitEventUpdate({ count: fetchedItems.length });
       } 
       else {
         this.logger.warn(`Unknown syncType: ${syncType}`);
