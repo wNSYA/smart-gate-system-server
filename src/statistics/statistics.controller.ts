@@ -11,4 +11,14 @@ export class StatisticsController {
   getEmployeeStats() {
     return this.statisticsService.getEmployeeStats();
   }
+
+  @Get('darurat')
+  getEmergencyStats() {
+    return this.statisticsService.getEmergencyStats();
+  }
+
+  @Get('tamu')
+  getVisitorStats() {
+    return this.statisticsService.getVisitorStats();
+  }
 }
