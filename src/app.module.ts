@@ -6,6 +6,8 @@ import { CronModule } from './cron/cron.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { StatisticsModule } from './statistics/statistics.module';
+import { SocketModule } from './socket/socket.module';
 
 @Module({
   imports: [
@@ -13,7 +15,9 @@ import { PrismaModule } from './prisma/prisma.module';
     ScheduleModule.forRoot(), 
     PrismaModule, 
     AuthModule,
-    CronModule
+    CronModule,
+    StatisticsModule,
+    SocketModule
   ],
   controllers: [AppController],
   providers: [AppService],
