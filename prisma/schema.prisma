@@ -71,7 +71,6 @@ model account {
   name            String      @db.VarChar(128)
   username        String      @unique @db.VarChar(64)
   password        String      @db.VarChar(255)
-  role            AccountRole @default(SECURITY)
   createdAt       DateTime    @default(now())
 }
 
@@ -81,7 +80,6 @@ enum UserType {
   normal
   visitor
   blackList
-  administrators
 }
 
 enum Gender {
@@ -101,17 +99,3 @@ enum GateMode {
   EMERGENCY
 }
 
-enum AccountRole {
-  ADMIN
-  SECURITY
-}
-
-enum Direction {
-  IN
-  OUT
-}
-
-enum AccessStatus {
-  GRANTED
-  DENIED
-}
