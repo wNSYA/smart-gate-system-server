@@ -1,13 +1,5 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
-// Note: Prisma enforces string lengths via @db.VarChar(), but numerical min/max validations 
-// (like maxOpenDoorTime @max: 255) must be handled at the application/validation layer.
-
-// Changes :
-// UserType di Employee : UserTypeEmployee
 
 generator client {
   provider = "prisma-client-js"
@@ -18,133 +10,72 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
-//==========================================================
-// ENDPOINT /ISAPI/AccessControl/UserInfo/Search?format=json
-//==========================================================
-
-model employee {
-  employeeNo          String             @id @db.VarChar(32) // Using employeeNo as the Primary Key
-  name                String             @db.VarChar(128)
-  userTypeEmployee    UserType           @default(normal)
-  onlyVerify          Boolean            @default(false)
-  closeDelayEnabled   Boolean            @default(false)
+// 1. Person (ISAPI Format: UserInfo Search)
+// Menggabungkan Employee & Guest sesuai ERD (person)
+model person {
+  employeeNo      String      @id @db.VarChar(32) // ID Utama dari ISAPI
+  name            String      @db.VarChar(128)
+  userType        UserType    @default(normal)    // normal (karyawan), visitor (tamu)
+  gender          Gender      @default(unknown)
   
-  // Flattened 'Valid' Object
-  validEnable         Boolean            @default(true)
-  validBeginTime      DateTime
-  validEndTime        DateTime
-  validTimeType       String             @default("local")
-
-  belongGroup         String             @db.VarChar(32)
-  password            String             @db.VarChar(8)
-  doorRight           String             @db.VarChar(1)
-
-  // Numeric stats
-  maxOpenDoorTime     Int                @default(0) 
-  openDoorTime        Int                @default(0) 
-  roomNumber          Int                @default(0) 
-  floorNumber         Int                @default(0) 
+  // Field ISAPI untuk validasi akses
+  validEnable     Boolean     @default(true)
+  validBeginTime  DateTime?
+  validEndTime    DateTime?
   
-  localUIRight        Boolean            @default(false)
-  gender              Gender             @default(unknown)
-  numOfCard           Int                @default(0)
-  numOfFP             Int                @default(0)
-  numOfFace           Int                @default(0)
+  // Field Tambahan untuk ERD Mustering
+  last_synced_at  DateTime    @default(now())
+
+  // Relasi ke Log
+  access_records  access_record[]
+}
+
+// 2. Gate (Sesuai ERD)
+model gate {
+  id              String      @id @default(uuid())
+  device_id       String?     @unique
+  name            String      @db.VarChar(128)
   
-  last_synced_at      DateTime           @default(now())
-
-}
-
-model UserAuth {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
-  password  String   @db.VarChar(255)
-  role      UserRole @default(SECURITY)
-  createdAt DateTime @default(now())
-}
-
-enum UserRole {
-  ADMIN
-  SECURITY
-}
-
-// --- Enums extracted from metadata ---
-
-enum UserTypeEmployee {
-  normal
-  visitor
-  blackList
-  custom1
-  custom2
-  custom3
-  custom4
-  custom5
-}
-
-enum Gender {
-  male
-  female
-  unknown
-}
-
-enum UserVerifyMode {
-  cardAndPw
-  card
-  fp
-  fpAndPw
-  fpOrCard
-  fpAndCard
-  fpAndCardAndPw
-  faceOrFpOrCardOrPw
-  faceAndFp
-  faceAndPw
-  faceAndCard
-  face
-  fpOrPw
-  faceAndFpAndCard
-  faceAndPwAndFp
-  fpOrface
-  cardOrfaceOrPw
-  cardOrFace
-  cardOrFaceOrFp
-  faceOrPw
-}
-
-
-//======================================================
-// /ISAPI/AccessControl/AcsEvent?format=json
-//======================================================
-
-model eventRecord {
-  // Base fields present in every event
-  serialNo           String       @id @db.VarChar(128) // Using BigInt because metadata max is 3,000,000,000
-  major              Int          // Values: 0, 1, 2, 3, 5
-  minor              Int
-  time               DateTime
-  doorNo             Int?
-
-  // Optional fields that only appear in specific event types
-  cardType           Int?         // Values: 1, 4, 5, 6
-  name               String?      @db.VarChar(255)
-  cardReaderNo       Int?
-  employeeNoString   String?      @db.VarChar(32)
-  userType           UserType?
-  currentVerifyMode  VerifyMode?
-  mask               MaskStatus?
-  cardNo             String?      @db.VarChar(255)
-
-  // Flattened FaceRect fields (stored as Floats)
-  faceRectHeight     Float?
-  faceRectWidth      Float?
-  faceRectX          Float?
-  faceRectY          Float?
+  // Detail Koneksi ISAPI
+  ip_address      String?     @db.VarChar(64)
+  username        String?     @db.VarChar(64)
+  password        String?     @db.VarChar(128)
   
-  @@index([time]) // Adding an index on time since logs are usually queried by date
-  @@index([employeeNoString])
+  status          GateStatus  @default(OFFLINE)
+  mode            GateMode    @default(NORMAL)
+
+  access_records  access_record[]
 }
 
-// --- Enums filtered strictly to the metadata provided for the JSON fields ---
+// 3. Access Record (ISAPI Format: AcsEvent)
+model access_record {
+  serialNo           String      @id @db.VarChar(128) // ID Utama ISAPI
+  major              Int         // Event Major Code
+  minor              Int         // Event Minor Code
+  time               DateTime    // Timestamp dari ISAPI
+  
+  // Relasi sesuai ERD
+  person_id          String?     @db.VarChar(32)
+  person             person?     @relation(fields: [person_id], references: [employeeNo])
+  
+  gate_id            String?
+  gate               gate?       @relation(fields: [gate_id], references: [id])
+
+  @@index([time])
+  @@index([person_id])
+}
+
+// 4. Account (Sesuai ERD - Menggantikan UserAuth)
+model account {
+  id              String      @id @default(uuid())
+  name            String      @db.VarChar(128)
+  username        String      @unique @db.VarChar(64)
+  password        String      @db.VarChar(255)
+  role            AccountRole @default(SECURITY)
+  createdAt       DateTime    @default(now())
+}
+
+// --- Enums (Strictly ISAPI Compatible) ---
 
 enum UserType {
   normal
@@ -153,32 +84,34 @@ enum UserType {
   administrators
 }
 
-enum MaskStatus {
+enum Gender {
+  male
+  female
   unknown
-  yes
-  no
 }
 
-enum VerifyMode {
-  cardAndPw
-  card
-  fp
-  fpAndPw
-  fpOrCard
-  fpAndCard
-  fpAndCardAndPw
-  faceOrFpOrCardOrPw
-  faceAndFp
-  faceAndPw
-  faceAndCard
-  face
-  fpOrPw
-  faceAndFpAndCard
-  faceAndPwAndFp
-  fpOrface
-  cardOrfaceOrPw
-  cardOrFace
-  cardOrFaceOrFp
-  cardOrFpOrPw
-  faceOrPw
+enum GateStatus {
+  OPEN
+  CLOSED
+  OFFLINE
+}
+
+enum GateMode {
+  NORMAL
+  EMERGENCY
+}
+
+enum AccountRole {
+  ADMIN
+  SECURITY
+}
+
+enum Direction {
+  IN
+  OUT
+}
+
+enum AccessStatus {
+  GRANTED
+  DENIED
 }
