@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserType } from '@prisma/client';
 
 @Injectable()
 export class StatisticsService {
@@ -9,26 +10,33 @@ export class StatisticsService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Total Karyawan
-    const totalEmployees = await this.prisma.employee.count();
+    // 1. Total Karyawan (person dengan userType normal)
+    const totalEmployees = await this.prisma.person.count({
+      where: { userType: UserType.normal }
+    });
 
     // 2. Hadir Hari Ini (Hanya yang SUKSES: 1, 38, 75)
-    const presentTodayRecords = await this.prisma.eventRecord.groupBy({
-      by: ['employeeNoString'],
+    // person_id merujuk ke employeeNo di model person
+    const presentTodayRecords = await this.prisma.access_record.groupBy({
+      by: ['person_id'],
       where: {
         time: { gte: today },
-        employeeNoString: { not: null },
-        userType: 'normal',
+        person_id: { not: null },
+        person: {
+          userType: UserType.normal
+        },
         minor: { in: [1, 38, 75] },
       },
     });
     const presentToday = presentTodayRecords.length;
 
     // 3. Data Grafik (Hanya yang SUKSES)
-    const logsToday = await this.prisma.eventRecord.findMany({
+    const logsToday = await this.prisma.access_record.findMany({
       where: {
         time: { gte: today },
-        userType: 'normal',
+        person: {
+          userType: UserType.normal
+        },
         minor: { in: [1, 38, 75] },
       },
       select: { time: true },
@@ -45,13 +53,19 @@ export class StatisticsService {
     });
 
     // 4. Log Terakhir dengan mapping status & metode
-    const lastLogsRaw = await this.prisma.eventRecord.findMany({
+    const lastLogsRaw = await this.prisma.access_record.findMany({
       take: 5,
       orderBy: { time: 'desc' },
       where: { 
-        userType: 'normal',
+        person: {
+          userType: UserType.normal
+        },
         minor: { in: [1, 2, 38, 39, 75, 76] } 
       },
+      include: {
+        person: true,
+        gate: true
+      }
     });
 
     const minorInfoMap = {
@@ -65,12 +79,16 @@ export class StatisticsService {
 
     const recentLogs = lastLogsRaw.map(log => {
       const info = minorInfoMap[log.minor] || { method: 'UNKNOWN', success: false };
-      const direction = log.cardReaderNo === 1 ? 'MASUK' : 'KELUAR';
+      
+      // Menggunakan major/minor atau gate_id untuk arah jika tersedia di masa depan
+      // Untuk sekarang kita beri label generic
+      const direction = 'AKSES'; 
 
       return {
         ...log,
         statusLabel: `${direction} (${info.method})`,
         isSuccess: info.success,
+        name: log.person?.name || 'Unknown'
       };
     });
 
@@ -83,39 +101,34 @@ export class StatisticsService {
   }
 
   async getEmergencyStats() {
-    // 1. Ambil data semua karyawan dan gabungkan dengan log terakhir mereka
-    // Kita menggunakan raw query untuk efisiensi "DISTINCT ON" pada employeeNo
+    // 1. Ambil data semua person (normal) dan gabungkan dengan log terakhir mereka
     const residentsRaw: any[] = await this.prisma.$queryRaw`
       SELECT 
-        e."employeeNo", 
-        e."name", 
-        e."floorNumber",
-        sub."cardReaderNo",
-        sub."time" as "lastSeen"
-      FROM "employee" e
+        p."employeeNo", 
+        p."name", 
+        ar."gate_id",
+        ar."time" as "lastSeen"
+      FROM "person" p
       LEFT JOIN (
-        SELECT DISTINCT ON ("employeeNoString") 
-          "employeeNoString", "cardReaderNo", "time"
-        FROM "eventRecord"
-        ORDER BY "employeeNoString", "time" DESC
-      ) sub ON e."employeeNo" = sub."employeeNoString"
-      ORDER BY e."name" ASC
+        SELECT DISTINCT ON ("person_id") 
+          "person_id", "gate_id", "time"
+        FROM "access_record"
+        ORDER BY "person_id", "time" DESC
+      ) ar ON p."employeeNo" = ar."person_id"
+      WHERE p."userType" = 'normal'
+      ORDER BY p."name" ASC
     `;
 
-    // 2. Petakan data untuk menentukan siapa yang di dalam (INSIDE), di luar (OUTSIDE), atau belum ada data (UNKNOWN)
+    // 2. Petakan data
     const residents = residentsRaw.map(r => {
       let status: 'INSIDE' | 'OUTSIDE' | 'UNKNOWN' = 'UNKNOWN';
       
-      if (r.cardReaderNo === 1) {
-        status = 'INSIDE';
-      } else if (r.cardReaderNo === 2) {
-        status = 'OUTSIDE';
-      }
+      // Logic sederhana: jika ada log terakhir, kita anggap INSIDE (perlu gate logic untuk real OUT)
+      status = r.lastSeen ? 'INSIDE' : 'UNKNOWN';
 
       return {
         id: r.employeeNo,
         name: r.name || 'Anonymous',
-        floor: r.floorNumber || 0,
         status: status,
         lastSeen: r.lastSeen,
       };
@@ -123,16 +136,10 @@ export class StatisticsService {
 
     const occupancy = residents.filter(r => r.status === 'INSIDE').length;
 
-    // 3. Status Gedung (Default Normal)
-    // Catatan: Di masa depan, ini bisa diambil dari tabel SystemStatus
     const buildingStatus = "Normal"; 
 
-    const gates = [
-      { id: 1, name: "Gerbang Utama (In)", status: "Open" },
-      { id: 2, name: "Gerbang Utama (Out)", status: "Open" },
-      { id: 3, name: "Pintu Samping", status: "Closed" },
-      { id: 4, name: "Pintu Gudang", status: "Offline" },
-    ];
+    // Mengambil daftar gate dari tabel gate yang baru
+    const gates = await this.prisma.gate.findMany();
 
     return {
       buildingStatus,
@@ -146,31 +153,36 @@ export class StatisticsService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Total Tamu Hari Ini (Unique by name or cardNo today)
-    const todayVisitors = await this.prisma.eventRecord.groupBy({
-      by: ['cardNo'],
+    // 1. Total Tamu Hari Ini (Unique by person_id today)
+    const todayVisitors = await this.prisma.access_record.groupBy({
+      by: ['person_id'],
       where: {
         time: { gte: today },
-        userType: 'visitor',
-        minor: { in: [1, 38, 75] }, // Hanya yang sukses masuk
+        person: {
+          userType: UserType.visitor
+        },
+        minor: { in: [1, 38, 75] }, 
       },
     });
 
-    // 2. Tamu Sedang di Gedung (Okupansi Tamu)
-    // Ambil log terakhir setiap nomor kartu tamu
+    // 2. Tamu Sedang di Gedung
     const lastLogs: any[] = await this.prisma.$queryRaw`
-      SELECT DISTINCT ON ("cardNo") "cardNo", "name", "cardReaderNo", "time"
-      FROM "eventRecord"
-      WHERE "userType" = 'visitor' AND "cardNo" IS NOT NULL
-      ORDER BY "cardNo", "time" DESC
+      SELECT DISTINCT ON ("person_id") ar."person_id", p."name", ar."time"
+      FROM "access_record" ar
+      JOIN "person" p ON ar."person_id" = p."employeeNo"
+      WHERE p."userType" = 'visitor'
+      ORDER BY "person_id", ar."time" DESC
     `;
-    const inBuilding = lastLogs.filter(log => log.cardReaderNo === 1);
+    
+    const inBuilding = lastLogs;
 
     // 3. Traffic Tamu (Grafik Per Jam)
-    const logsToday = await this.prisma.eventRecord.findMany({
+    const logsToday = await this.prisma.access_record.findMany({
       where: {
         time: { gte: today },
-        userType: 'visitor',
+        person: {
+          userType: UserType.visitor
+        },
         minor: { in: [1, 38, 75] },
       },
       select: { time: true },
@@ -188,9 +200,9 @@ export class StatisticsService {
 
     // 4. List Tamu di Gedung (Untuk Tabel)
     const visitorsList = inBuilding.map(log => ({
-      name: log.name || `Tamu ${log.cardNo}`,
-      company: '-', // Kosong dulu sesuai permintaan
-      purpose: '-', // Kosong dulu sesuai permintaan
+      name: log.name || `Tamu ${log.person_id}`,
+      company: '-', 
+      purpose: '-', 
       checkInTime: log.time,
       status: 'Masuk'
     }));
