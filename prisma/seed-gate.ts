@@ -11,7 +11,7 @@ async function main() {
   const gatePassword = process.env.API_PASSWORD
 
   if (!gateIP || !gateUsername || !gatePassword) {
-    throw new Error('Missing required environment variables for gate seeding.')
+    throw new Error('Missing required environment variables for gate seeding.');
   }
 
   // TypeScript now knows these are strictly 'string' types
