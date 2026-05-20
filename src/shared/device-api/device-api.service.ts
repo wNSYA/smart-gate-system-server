@@ -12,7 +12,7 @@ export class DeviceApiService {
   constructor(private readonly httpService: HttpService) {}
 
   // Master function for all device communication
-  async sendCommand(
+async sendCommand(
     ipAddress: string,
     route: string,
     method: 'GET' | 'PUT' | 'POST',
@@ -20,21 +20,29 @@ export class DeviceApiService {
     pass: string,
     payload?: any
   ) {
-    const url = `${ipAddress.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
+    // --- NEW LOGIC: Ensure the IP has a protocol ---
+    const formattedIp = ipAddress.startsWith('http') 
+      ? ipAddress 
+      : `http://${ipAddress}`;
+
+    // Now use formattedIp instead of ipAddress
+    const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
 
     try {
-      // 1. Try normally (will likely 401)
       return await this.executeHttp(url, method, payload);
     } catch (error: any) {
-      // 2. Intercept 401 and generate Digest Auth
       if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
         const authHeader = error.response.headers['www-authenticate'];
         const digest = this.generateDigestAuth(authHeader, url, method, user, pass);
         
-        // 3. Retry with Digest header
         return await this.executeHttp(url, method, payload, digest);
       }
-      throw new HttpException(`Device Error: ${error.message}`, error.response?.status || 500);
+      
+      // I also recommend improving the error log here to catch the "Invalid URL" early next time
+      throw new HttpException(
+        `Device Error: ${error.message || 'Unknown network error'}`, 
+        error.response?.status || 500
+      );
     }
   }
 

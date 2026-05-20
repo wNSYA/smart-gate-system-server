@@ -9,6 +9,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { SocketModule } from './socket/socket.module';
 import { DeviceApiModule } from './shared/device-api/device-api.module';
+import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
 
 @Module({
   imports: [
@@ -19,7 +20,8 @@ import { DeviceApiModule } from './shared/device-api/device-api.module';
     CronModule,
     StatisticsModule,
     SocketModule,
-    DeviceApiModule
+    DeviceApiModule,
+    GateMonitorModule
   ],
   controllers: [AppController],
   providers: [AppService],

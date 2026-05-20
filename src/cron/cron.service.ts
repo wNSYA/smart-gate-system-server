@@ -32,9 +32,9 @@ export class CronService {
     // 1. Fetch all gates that have connection credentials set up
     const gates = await this.prisma.gate.findMany({
       where: {
-        ip_address: { not: null },
-        username: { not: null },
-        password: { not: null },
+        ip_address: { not: '' },
+        username: { not: '' },
+        password: { not: '' },
       },
     });
 
@@ -256,17 +256,15 @@ export class CronService {
   // ====================================================================
   async executeDigestTask(route: string, params?: any, data?: any, gate?: any) {
     // If a gate is passed, use its credentials. Otherwise, fallback to .env for system-wide syncs (like person)
-    const baseUrlRaw = gate?.ip_address || this.configService.get<string>('API_URL');
+    const baseUrl = gate?.ip_address || this.configService.get<string>('API_URL');
     const username = gate?.username || this.configService.get<string>('API_USERNAME');
     const password = gate?.password || this.configService.get<string>('API_PASSWORD');
     const method = 'POST';
 
-    if (!baseUrlRaw || !username || !password) {
+    if (!baseUrl || !username || !password) {
       throw new HttpException('Missing API configuration or Gate credentials', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    // Ensure ISAPI URLs have a protocol
-    const baseUrl = baseUrlRaw.startsWith('http') ? baseUrlRaw : `http://${baseUrlRaw}`;
 
     const queryString = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
     const routeWithParams = `${route}${queryString}`;
