@@ -45,6 +45,9 @@ model gate {
 
   direction      GateDirection   @default(IN)
 
+  // Heartbeat / Sync Status
+  last_synced_at  DateTime?
+
   access_records  access_record[]
 }
 

@@ -25,7 +25,7 @@ export class CronService {
   @Cron(CronExpression.EVERY_10_SECONDS)
   async handleAccessRecordSync() {
     const now = dayjs();
-    const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.subtract(7, 'hour').subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     // 1. Fetch all gates that have connection credentials set up
@@ -162,6 +162,14 @@ export class CronService {
         await this.saveToDatabase(task.syncType, allFetchedItems, task.gateId);
       } else {
         this.logger.debug(`[${task.syncType} - ${identifier}] No new data found.`);
+      }
+
+      // Update Heartbeat for the gate if it's a gate-specific task
+      if (gate && gate.id) {
+        await this.prisma.gate.update({
+          where: { id: gate.id },
+          data: { last_synced_at: new Date() }
+        });
       }
       
     } catch (error: any) {

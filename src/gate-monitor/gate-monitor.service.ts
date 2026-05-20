@@ -39,6 +39,17 @@ export class GateMonitorService implements OnModuleInit {
       let displayStatus = 'OFFLINE'; 
       let isOnline = false;
 
+      // Ensure required connection fields are present to satisfy TS and handle incomplete config
+      if (!gate.ip_address || !gate.username || !gate.password) {
+        return {
+          id: gate.id,
+          device_id: gate.device_id,
+          name: gate.name,
+          isOnline: false,
+          displayStatus: 'CONFIG ERROR',
+        };
+      }
+
       try {
         const response = await this.deviceApi.sendCommand(
           gate.ip_address,
@@ -62,13 +73,17 @@ export class GateMonitorService implements OnModuleInit {
         displayStatus = 'OFFLINE';
         isOnline = false;
       }
+return {
+  id: gate.id,
+  device_id: gate.device_id,
+  name: gate.name,
+  isOnline: isOnline,
+  displayStatus: displayStatus,
+  lastSyncedAt: gate.last_synced_at,
+  direction: gate.direction,
+};
 
-      return {
-        id: gate.id,
-        device_id: gate.device_id,
-        name: gate.name,
-        isOnline: isOnline,
-        displayStatus: displayStatus,
+        direction: gate.direction,
       };
     });
 
