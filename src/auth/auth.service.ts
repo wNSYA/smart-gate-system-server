@@ -10,10 +10,10 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateUser(name: string, pass: string): Promise<any> {
-    // 1. Cari user berdasarkan name di tabel UserAuth
-    const user = await this.prisma.userAuth.findUnique({
-      where: { name },
+  async validateUser(username: string, pass: string): Promise<any> {
+    // 1. Cari user berdasarkan username di tabel account
+    const user = await this.prisma.account.findUnique({
+      where: { username },
     });
 
     // 2. Jika user ditemukan, bandingkan password menggunakan bcrypt
@@ -26,11 +26,11 @@ export class AuthService {
   }
 
   async login(user: any) {
-    // 4. Buat payload untuk JWT termasuk ID, Name, dan Role
+    // 4. Buat payload untuk JWT termasuk ID, Name, dan Username
     const payload = { 
       sub: user.id, 
-      name: user.name, 
-      role: user.role 
+      name: user.name,
+      username: user.username
     };
 
     // 5. Kembalikan access_token

@@ -8,6 +8,8 @@ import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { SocketModule } from './socket/socket.module';
+import { DeviceApiModule } from './shared/device-api/device-api.module';
+import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
 
 @Module({
   imports: [
@@ -17,7 +19,9 @@ import { SocketModule } from './socket/socket.module';
     AuthModule,
     CronModule,
     StatisticsModule,
-    SocketModule
+    SocketModule,
+    DeviceApiModule,
+    GateMonitorModule
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -37,12 +37,9 @@ model gate {
   name            String      @db.VarChar(128)
   
   // Detail Koneksi ISAPI
-  ip_address      String?     @db.VarChar(64)
-  username        String?     @db.VarChar(64)
-  password        String?     @db.VarChar(128)
-  
-  status          GateStatus  @default(OFFLINE)
-  mode            GateMode    @default(NORMAL)
+  ip_address      String     @db.VarChar(64)
+  username        String     @db.VarChar(64)
+  password        String     @db.VarChar(128)
 
   access_records  access_record[]
 }
@@ -87,15 +84,3 @@ enum Gender {
   female
   unknown
 }
-
-enum GateStatus {
-  OPEN
-  CLOSED
-  OFFLINE
-}
-
-enum GateMode {
-  NORMAL
-  EMERGENCY
-}
-
