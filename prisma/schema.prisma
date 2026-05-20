@@ -28,6 +28,8 @@ model person {
 
   // Relasi ke Log
   access_records  access_record[]
+
+  visits          visit[]
 }
 
 // 2. Gate (Sesuai ERD)
@@ -40,6 +42,8 @@ model gate {
   ip_address      String     @db.VarChar(64)
   username        String     @db.VarChar(64)
   password        String     @db.VarChar(128)
+
+  direction      GateDirection   @default(IN)
 
   access_records  access_record[]
 }
@@ -58,6 +62,9 @@ model access_record {
   gate_id            String?
   gate               gate?       @relation(fields: [gate_id], references: [id])
 
+  // for processing (ETL)
+  is_processed Boolean   @default(false)
+
   @@index([time])
   @@index([person_id])
 }
@@ -71,6 +78,20 @@ model account {
   createdAt       DateTime    @default(now())
 }
 
+// 5. The Status/Visit Table
+model visit {
+  id         String    @id @default(uuid())
+  person_id  String    @db.VarChar(32)
+  person     person    @relation(fields: [person_id], references: [employeeNo])
+
+  entry_time DateTime? 
+  exit_time  DateTime? 
+
+  @@index([person_id])
+  @@index([exit_time]) 
+}
+
+
 // --- Enums (Strictly ISAPI Compatible) ---
 
 enum UserType {
@@ -83,4 +104,9 @@ enum Gender {
   male
   female
   unknown
+}
+
+enum GateDirection {
+  IN
+  OUT
 }
