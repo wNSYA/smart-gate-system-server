@@ -5,7 +5,6 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { SocketGateway } from '../socket/socket.gateway';
 import { DeviceApiService } from '../shared/device-api/device-api.service';
-import * as crypto from 'crypto';
 import dayjs from 'dayjs';
 import { randomUUID } from 'crypto';
 
