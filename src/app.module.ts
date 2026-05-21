@@ -6,7 +6,9 @@ import { CronModule } from './cron/cron.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { StatisticsModule } from './statistics/statistics.module';
+import { EmployeeStatsModule } from './stats-employee/stats-employee.module';
+import { VisitorStatsModule } from './stats-visitor/stats-visitor.module';
+import { EmergencyStatsModule } from './stats-emergency/stats-emergency.module';
 import { SocketModule } from './socket/socket.module';
 import { DeviceApiModule } from './shared/device-api/device-api.module';
 import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
@@ -20,7 +22,9 @@ import { VisitsModule } from './visits/visits.module';
     PrismaModule, 
     AuthModule,
     CronModule,
-    StatisticsModule,
+    EmployeeStatsModule,
+    VisitorStatsModule,
+    EmergencyStatsModule,
     SocketModule,
     DeviceApiModule,
     GateMonitorModule,

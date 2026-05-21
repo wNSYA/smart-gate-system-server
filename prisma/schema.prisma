@@ -26,6 +26,9 @@ model person {
   // Field Tambahan untuk ERD Mustering
   last_synced_at  DateTime    @default(now())
 
+  // Visual Verification
+  photo_path      String?     @db.VarChar(255)
+
   // Relasi ke Log
   access_records  access_record[]
 
@@ -45,6 +48,9 @@ model gate {
 
   direction      GateDirection   @default(IN)
 
+  // Heartbeat / Sync Status
+  last_synced_at  DateTime?
+
   access_records  access_record[]
 }
 
@@ -61,6 +67,9 @@ model access_record {
   
   gate_id            String?
   gate               gate?       @relation(fields: [gate_id], references: [id])
+
+  // Visual Verification
+  snapshot_path      String?     @db.VarChar(255)
 
   // for processing (ETL)
   is_processed Boolean   @default(false)
