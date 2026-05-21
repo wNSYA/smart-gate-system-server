@@ -46,8 +46,9 @@ async sendCommand(
     }
   }
 
-  private async executeHttp(url: string, method: string, data?: any, authHeader?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  private async executeHttp(url: string, method: string, data?: any, authHeader?: string, responseType: 'json' | 'arraybuffer' = 'json') {
+    const headers: Record<string, string> = {};
+    if (data && responseType === 'json') headers['Content-Type'] = 'application/json';
     if (authHeader) headers['Authorization'] = authHeader;
 
     const response = await firstValueFrom(
@@ -56,11 +57,36 @@ async sendCommand(
         method,
         data,
         headers,
+        responseType,
         httpsAgent: this.httpsAgent,
-        timeout: 4000, // 4-second timeout to prevent locking up
+        timeout: 10000, // Increased timeout for images
       })
     );
     return response.data;
+  }
+
+  // Add a specific method for binary download
+  async downloadBinary(
+    ipAddress: string,
+    route: string,
+    user: string,
+    pass: string
+  ): Promise<Buffer> {
+    const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
+    const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
+
+    try {
+      const data = await this.executeHttp(url, 'GET', null, undefined, 'arraybuffer');
+      return Buffer.from(data);
+    } catch (error: any) {
+      if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
+        const authHeader = error.response.headers['www-authenticate'];
+        const digest = this.generateDigestAuth(authHeader, url, 'GET', user, pass);
+        const data = await this.executeHttp(url, 'GET', null, digest, 'arraybuffer');
+        return Buffer.from(data);
+      }
+      throw error;
+    }
   }
 
   private generateDigestAuth(authHeader: string, uri: string, method: string, user: string, pass: string): string {

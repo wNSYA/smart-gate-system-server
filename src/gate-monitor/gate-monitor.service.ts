@@ -73,16 +73,14 @@ export class GateMonitorService implements OnModuleInit {
         displayStatus = 'OFFLINE';
         isOnline = false;
       }
-return {
-  id: gate.id,
-  device_id: gate.device_id,
-  name: gate.name,
-  isOnline: isOnline,
-  displayStatus: displayStatus,
-  lastSyncedAt: gate.last_synced_at,
-  direction: gate.direction,
-};
 
+      return {
+        id: gate.id,
+        device_id: gate.device_id,
+        name: gate.name,
+        isOnline: isOnline,
+        displayStatus: displayStatus,
+        lastSyncedAt: gate.last_synced_at,
         direction: gate.direction,
       };
     });
