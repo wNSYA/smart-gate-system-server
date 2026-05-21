@@ -22,6 +22,7 @@ async function main() {
       ip_address: gateIP,
       username: gateUsername,
       password: gatePassword,
+      direction: 'IN'
     },
   })
 
@@ -33,6 +34,7 @@ async function main() {
       ip_address: '192.168.1.102',
       username: 'admin',
       password: 'supersecretpassword2',
+      direction: 'OUT'
     },
   })
 

@@ -13,6 +13,7 @@ import { SocketModule } from './socket/socket.module';
 import { DeviceApiModule } from './shared/device-api/device-api.module';
 import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
 import { EtlModule } from './etl/etl.module';
+import { VisitsModule } from './visits/visits.module';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { EtlModule } from './etl/etl.module';
     SocketModule,
     DeviceApiModule,
     GateMonitorModule,
-    EtlModule
+    EtlModule,
+    VisitsModule
   ],
   controllers: [AppController],
   providers: [AppService],
