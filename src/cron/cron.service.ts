@@ -42,7 +42,12 @@ export class CronService {
       },
     });
 
-    if (gates.length === 0) return;
+    if (gates.length === 0) {
+      this.logger.debug('No configured gates found for access record sync.');
+      return;
+    }
+
+    this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
     const syncPromises = gates.map((gate) => {
       const sessionSearchID = "sync_" + randomUUID();
@@ -79,6 +84,7 @@ export class CronService {
   // ====================================================================
   @Cron(CronExpression.EVERY_MINUTE)
   async handlePersonSync() {
+    this.logger.log('[Person Sync] Starting periodic person synchronization...');
     const sessionSearchID = "sync_" + randomUUID();
     const personTask = {
       route: '/ISAPI/AccessControl/UserInfo/Search', 
@@ -101,7 +107,7 @@ export class CronService {
   // ====================================================================
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleMidnightReset() {
-    this.logger.log('Midnight reset signal sent.');
+    this.logger.log('--- Midnight reached. Triggering UI reset signal. ---');
     this.socketGateway.emitEventUpdate({ type: 'MIDNIGHT_RESET' });
   }
 
@@ -134,13 +140,17 @@ export class CronService {
 
         if (parentObj && parentObj.responseStatusStrg === 'MORE') {
           currentPosition += (parentObj.numOfMatches || items?.length || 30);
+          this.logger.debug(`[${task.syncType} - ${identifier}] Fetching next page, pos: ${currentPosition}`);
         } else {
           hasMore = false; 
         }
       }
 
       if (allFetchedItems.length > 0) {
+        this.logger.log(`[${task.syncType} - ${identifier}] Fetched ${allFetchedItems.length} items. Saving to DB...`);
         await this.saveToDatabase(task.syncType, allFetchedItems, task.gateId, gate, task.searchId);
+      } else {
+        this.logger.debug(`[${task.syncType} - ${identifier}] No new items found.`);
       }
 
       if (gate && gate.id) {
@@ -173,6 +183,7 @@ export class CronService {
   }
 
   private async syncPeople(items: any[], syncStartTime: Date) {
+    // 1. UPSERT
     await this.prisma.$transaction(
       items.map((item) => {
         const mappedData = {
@@ -193,11 +204,16 @@ export class CronService {
       })
     );
 
+    // 2. SWEEP (Safe deletion: only if no attendance history exists)
     const { count: deletedCount } = await this.prisma.person.deleteMany({
-      where: { last_synced_at: { lt: syncStartTime } },
+      where: { 
+        last_synced_at: { lt: syncStartTime },
+        access_records: { none: {} },
+        visits: { none: {} }
+      },
     });
 
-    this.logger.log(`[Person Sync] DONE. ${items.length} items upserted, ${deletedCount} removed.`);
+    this.logger.log(`[Person Sync] DONE. ${items.length} items upserted, ${deletedCount} removed (Sweep).`);
   }
 
   private async syncAccessRecords(items: any[], gateId?: string, gateObj?: any, searchId?: string) {
@@ -222,10 +238,8 @@ export class CronService {
     this.logger.log(`[Access Record Sync] DONE. ${items.length} records processed for Gate ID: ${gateId}`);
 
     if (gateObj && searchId && items.length > 0) {
-      // Diagnostic log
       this.logger.debug(`[Snapshot Debug] Raw item keys: ${Object.keys(items[0]).join(', ')}`);
       
-      // Check for both common flags: picPresent (standard) and isPicRetrieved (some firmwares)
       const picCount = items.filter(i => i.picPresent || i.isPicRetrieved).length;
       
       if (picCount > 0) {
@@ -233,8 +247,6 @@ export class CronService {
         this.downloadSnapshots(items, gateObj, searchId).catch(err => 
           this.logger.error(`[Snapshot Engine] Background download failed: ${err.message}`)
         );
-      } else {
-        this.logger.debug(`[Snapshot Engine] No events had picture flag. (picPresent: ${items[0].picPresent})`);
       }
     }
   }
