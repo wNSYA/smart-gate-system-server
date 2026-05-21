@@ -87,6 +87,8 @@ model visit {
   entry_time DateTime? 
   exit_time  DateTime? 
 
+  status     VisitStatus @default(ACTIVE)
+
   @@index([person_id])
   @@index([exit_time]) 
 }
@@ -109,4 +111,10 @@ enum Gender {
 enum GateDirection {
   IN
   OUT
+}
+
+enum VisitStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED_SYSTEM // Automatically expired by the 24-hour cron job
 }
