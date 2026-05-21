@@ -264,7 +264,7 @@ export class CronService {
           });
           successCount++;
         }
-      } catch (err) {
+      } catch (err: any) {
         this.logger.warn(`[Snapshot] Failed for ${serialNoString}: ${err.message}`);
       }
     }
