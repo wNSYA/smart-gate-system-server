@@ -5,7 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import type { Cache } from 'cache-manager';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeviceApiService } from '../shared/device-api/device-api.service';
-import { SocketGateway } from '../socket/socket.gateway'; // <-- Import the gateway
+import { SocketGateway } from '../socket/socket.gateway'; 
 
 @Injectable()
 export class GateMonitorService implements OnModuleInit {
