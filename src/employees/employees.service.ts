@@ -116,9 +116,20 @@ export class EmployeesService {
     }
 
     try {
+      // 1. Delete physical photo file if exists
+      if (person.photo_path) {
+        const absolutePath = path.join(process.cwd(), person.photo_path);
+        if (fs.existsSync(absolutePath)) {
+          fs.unlinkSync(absolutePath);
+          this.logger.log(`[Storage] Deleted physical photo: ${person.photo_path}`);
+        }
+      }
+
+      // 2. Delete from database
       await this.prisma.person.delete({ where: { employeeNo } });
+      this.logger.log(`[Database] Deleted employee: ${employeeNo}`);
     } catch (e) {
-      this.logger.warn(`Preserved ${employeeNo} in DB (history exists)`);
+      this.logger.warn(`Preserved ${employeeNo} in DB (history logs likely exist)`);
     }
 
     return { success: true };
