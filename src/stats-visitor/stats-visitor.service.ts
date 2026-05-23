@@ -15,7 +15,10 @@ export class VisitorStatsService {
       where: {
         time: { gte: today },
         person: {
-          userType: UserType.visitor
+          name: {
+            contains: 'visitor',
+            mode: 'insensitive'
+          }
         },
         minor: { in: [1, 38, 75] }, 
       },
@@ -25,7 +28,7 @@ export class VisitorStatsService {
       SELECT DISTINCT ON ("person_id") ar."person_id", p."name", ar."time"
       FROM "access_record" ar
       JOIN "person" p ON ar."person_id" = p."employeeNo"
-      WHERE p."userType" = 'visitor'
+      WHERE LOWER(p."name") LIKE '%visitor%'
       ORDER BY "person_id", ar."time" DESC
     `;
     
@@ -34,23 +37,34 @@ export class VisitorStatsService {
     const logsToday = await this.prisma.access_record.findMany({
       where: {
         time: { gte: today },
-        person: {
-          userType: UserType.visitor
-        },
+      person: {
+        name: {
+          contains: 'visitor',
+          mode: 'insensitive'
+        }
+      },  
         minor: { in: [1, 38, 75] },
       },
       select: { time: true },
     });
+
 
     const hourlyData = Array.from({ length: 24 }, (_, i) => ({ 
       hour: `${i.toString().padStart(2, '0')}:00`, 
       count: 0 
     }));
     
-    logsToday.forEach(log => {
-      const hour = new Date(log.time).getHours();
-      hourlyData[hour].count++;
-    });
+logsToday.forEach((log) => {
+  const localDate = new Date(
+    new Date(log.time).toLocaleString('en-US', {
+      timeZone: 'Asia/Jakarta',
+    }),
+  );
+
+  const hour = localDate.getHours();
+
+  hourlyData[hour].count++;
+});
 
     const visitorsList = inBuilding.map(log => ({
       name: log.name || `Tamu ${log.person_id}`,

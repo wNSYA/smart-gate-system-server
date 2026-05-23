@@ -31,7 +31,7 @@ export class CronService {
   @Cron(CronExpression.EVERY_10_SECONDS)
   async handleAccessRecordSync() {
     const now = dayjs();
-    const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.startOf('day').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     const gates = await this.prisma.gate.findMany({
