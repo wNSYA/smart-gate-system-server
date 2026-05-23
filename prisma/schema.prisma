@@ -102,7 +102,6 @@ model visit {
   @@index([exit_time]) 
 }
 
-
 // --- Enums (Strictly ISAPI Compatible) ---
 
 enum UserType {
@@ -125,5 +124,7 @@ enum GateDirection {
 enum VisitStatus {
   ACTIVE
   COMPLETED
-  EXPIRED_SYSTEM // Automatically expired by the 24-hour cron job
+  EXPIRED_SYSTEM
+  EMERGENCY   // Indicates an active emergency, person is still in the building/unaccounted for
+  EVACUATED   // Indicates the person has been found or safely evacuated
 }
