@@ -38,16 +38,18 @@ export class EmployeeStatsService {
   }
 
   async getEmployeeStats(dateParam?: string) {
-    const targetDate = dateParam ? dayjs(dateParam).startOf('day') : dayjs().startOf('day');
-    const targetDateEnd = targetDate.endOf('day');
-
     const totalEmployees = await this.prisma.person.count({
       where: { userType: UserType.normal }
     });
 
+    // Default to 'Today' (WIB expected from frontend, but we handle fallback here)
+    const targetDate = dateParam ? dayjs(dateParam) : dayjs();
+    const startDate = targetDate.startOf('day');
+    const endDate = targetDate.endOf('day');
+
     const logsTarget = await this.prisma.access_record.findMany({
       where: {
-        time: { gte: targetDate.toDate(), lte: targetDateEnd.toDate() }
+        time: { gte: startDate.toDate(), lte: endDate.toDate() }
       },
       include: { 
         person: true,
@@ -58,15 +60,16 @@ export class EmployeeStatsService {
 
     let inCount = 0;
     let outCount = 0;
-    const movements: any[] = [];
     const anomalyList: any[] = [];
     
-    const hourlyData = Array.from({ length: 24 }, (_, i) => ({ 
-      hour: `${i.toString().padStart(2, '0')}:00`, 
-      in: 0,
-      out: 0,
-      anomaly: 0 
+    // Fixed 0-23 Hourly Data (Calendar Day View)
+    const hourlyData = Array.from({ length: 24 }, (_, i) => ({
+      hour: `${i.toString().padStart(2, '0')}:00`,
+      in: 0, out: 0, anomaly: 0,
+      _hourValue: i
     }));
+
+    const movementsMap = new Map<string, any>();
 
     logsTarget.forEach(log => {
       const info = this.minorInfoMap[log.minor] || { success: false, label: 'UNKNOWN', method: 'UNKNOWN' };
@@ -74,33 +77,39 @@ export class EmployeeStatsService {
       const isAnomaly = !isSuccess && this.allowedMinorCodes.includes(log.minor);
       const isNormalUser = log.person?.userType === UserType.normal;
       
-      const hour = new Date(log.time).getHours();
+      const logHour = dayjs(log.time).hour();
+      const slot = hourlyData[logHour];
 
       if (log.person_id && isNormalUser && isSuccess) {
-        const moveEntry = {
-          ...log,
-          id: log.person_id,
-          name: log.person?.name || 'Unknown',
+        if (!movementsMap.has(log.person_id)) {
+          movementsMap.set(log.person_id, {
+            id: log.person_id,
+            name: log.person?.name || 'Unknown',
+            lastActivity: log.time,
+            events: [] 
+          });
+        }
+
+        const personData = movementsMap.get(log.person_id);
+        personData.events.push({
           time: log.time,
-          gate: log.gate?.name || 'Gate',
           direction: log.gate?.direction || 'IN',
-          statusLabel: info.label
-        };
-        
-        movements.push(moveEntry);
+          gate: log.gate?.name || 'Gate'
+        });
+        personData.lastActivity = log.time;
 
         if (log.gate?.direction === GateDirection.IN) {
           inCount++;
-          hourlyData[hour].in++;
+          slot.in++;
         } else {
           outCount++;
-          hourlyData[hour].out++;
+          slot.out++;
         }
       }
 
       if (isAnomaly) {
         anomalyList.push({
-          ...log, // Important: includes snapshot_path for visual verification
+          ...log,
           id: log.person_id || 'UNKNOWN',
           name: log.person?.name || 'Anonymous Visitor',
           time: log.time,
@@ -109,9 +118,16 @@ export class EmployeeStatsService {
           method: info.method,
           statusLabel: info.label
         });
-        hourlyData[hour].anomaly++;
+        slot.anomaly++;
       }
     });
+
+    const finalMovements = Array.from(movementsMap.values())
+      .map(m => ({
+        ...m,
+        events: m.events.sort((a: any, b: any) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      }))
+      .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
 
     return {
       totalEmployees,
@@ -119,7 +135,7 @@ export class EmployeeStatsService {
       outCount,
       anomalies: anomalyList.length,
       details: {
-        movements: movements.reverse(), 
+        movements: finalMovements, 
         anomalies: anomalyList.reverse()
       },
       hourlyGraph: hourlyData,
@@ -193,9 +209,17 @@ export class EmployeeStatsService {
     if (search) {
       where.AND.push({ OR: [ { person_id: { contains: search, mode: 'insensitive' } }, { person: { name: { contains: search, mode: 'insensitive' } } } ] });
     }
-    if (startDate || endDate) {
-      where.AND.push({ time: { gte: startDate ? dayjs(startDate).startOf('day').toDate() : undefined, lte: endDate ? dayjs(endDate).endOf('day').toDate() : undefined } });
-    }
+
+    // Force a date range: Use provided dates OR default to Today
+    const start = startDate ? dayjs(startDate).startOf('day') : dayjs().startOf('day');
+    const end = endDate ? dayjs(endDate).endOf('day') : dayjs();
+    
+    where.AND.push({ 
+      time: { 
+        gte: start.toDate(), 
+        lte: end.toDate() 
+      } 
+    });
 
     const [logs, totalEmployees] = await Promise.all([
       this.prisma.access_record.findMany({ where, orderBy: { time: 'asc' }, include: { person: true, gate: true } }),
@@ -234,13 +258,29 @@ export class EmployeeStatsService {
     });
     csvContent += "\n";
 
-    csvContent += "=== RINCIAN LOG AKTIVITAS ===\n";
-    csvContent += "Waktu,ID,Nama,Gerbang,Arah,Metode,Status\n";
+    csvContent += "=== RINCIAN PERGERAKAN KARYAWAN ===\n";
+    csvContent += "ID,Nama,Masuk Pertama,Keluar Terakhir,Total Aktivitas,Timeline Pergerakan\n";
 
-    for (const log of logs) {
-      const info = this.minorInfoMap[log.minor] || { method: 'UNKNOWN', success: false, label: 'UNKNOWN' };
-      csvContent += `"${dayjs(log.time).format('YYYY-MM-DD HH:mm:ss')}","${log.person_id || '-'}","${log.person?.name || (info.success ? 'Unknown' : 'Anonymous Visitor')}","${log.gate?.name || '-'}","${log.gate?.direction || '-'}","${info.method}","${info.label}"\n`;
-    }
+    const personMap = new Map<string, any>();
+    logs.forEach(log => {
+      if (!log.person_id) return;
+      const info = this.minorInfoMap[log.minor] || { success: false };
+      if (!info.success) return;
+
+      if (!personMap.has(log.person_id)) {
+        personMap.set(log.person_id, { id: log.person_id, name: log.person?.name || 'Unknown', events: [] });
+      }
+      const p = personMap.get(log.person_id);
+      p.events.push(`${log.gate?.direction === 'IN' ? 'MASUK' : 'KELUAR'} (${dayjs(log.time).format('HH:mm')})`);
+    });
+
+    personMap.forEach(p => {
+      const firstIn = p.events.find((e: string) => e.startsWith('MASUK')) || '-';
+      const lastOut = [...p.events].reverse().find((e: string) => e.startsWith('KELUAR')) || '-';
+      const timeline = p.events.join(' -> ');
+      csvContent += `"${p.id}","${p.name}","${firstIn}","${lastOut}","${p.events.length}","${timeline}"\n`;
+    });
+
     return csvContent;
   }
 }

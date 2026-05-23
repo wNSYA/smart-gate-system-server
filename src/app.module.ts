@@ -14,6 +14,7 @@ import { DeviceApiModule } from './shared/device-api/device-api.module';
 import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
 import { EtlModule } from './etl/etl.module';
 import { VisitsModule } from './visits/visits.module';
+import { EmployeesModule } from './employees/employees.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { VisitsModule } from './visits/visits.module';
     DeviceApiModule,
     GateMonitorModule,
     EtlModule,
-    VisitsModule
+    VisitsModule,
+    EmployeesModule
   ],
   controllers: [AppController],
   providers: [AppService],
