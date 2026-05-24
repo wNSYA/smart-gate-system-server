@@ -9,8 +9,8 @@ export class EmployeeStatsController {
   constructor(private readonly employeeStatsService: EmployeeStatsService) {}
 
   @Get()
-  getEmployeeStats() {
-    return this.employeeStatsService.getEmployeeStats();
+  getEmployeeStats(@Query('date') date?: string) {
+    return this.employeeStatsService.getEmployeeStats(date);
   }
 
   @Get('logs')
@@ -33,7 +33,9 @@ export class EmployeeStatsController {
   ) {
     const csvData = await this.employeeStatsService.exportLogs({ search, startDate, endDate });
     
-    const filename = `Laporan_Kehadiran_${new Date().toISOString().split('T')[0]}.csv`;
+    // Dynamic filename based on the selected start date
+    const dateLabel = startDate || new Date().toISOString().split('T')[0];
+    const filename = `Laporan_Akses_${dateLabel}.csv`;
     
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
