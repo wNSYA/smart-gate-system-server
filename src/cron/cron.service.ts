@@ -42,7 +42,12 @@ export class CronService {
       },
     });
 
-    if (gates.length === 0) return;
+    if (gates.length === 0) {
+      this.logger.debug('No configured gates found for access record sync.');
+      return;
+    }
+
+    this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
     this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
@@ -106,7 +111,7 @@ export class CronService {
   // ====================================================================
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleMidnightReset() {
-    this.logger.log('--- Midnight reached. Sending reset signal to clients. ---');
+    this.logger.log('--- Midnight reached. Triggering UI reset signal. ---');
     this.socketGateway.emitEventUpdate({ type: 'MIDNIGHT_RESET' });
   }
 
@@ -148,6 +153,8 @@ export class CronService {
       if (allFetchedItems.length > 0) {
         this.logger.log(`[${task.syncType} - ${identifier}] Fetched ${allFetchedItems.length} items. Saving to DB...`);
         await this.saveToDatabase(task.syncType, allFetchedItems, task.gateId, gate, task.searchId);
+      } else {
+        this.logger.debug(`[${task.syncType} - ${identifier}] No new items found.`);
       }
 
       if (gate && gate.id) {
@@ -183,6 +190,7 @@ export class CronService {
   // 1. PERSON SYNC (Mark & Sweep Strategy)
   // ====================================================================
   private async syncPeople(items: any[], syncStartTime: Date) {
+    // 1. UPSERT
     await this.prisma.$transaction(
       items.map((item) => {
         const mappedData = {
@@ -203,6 +211,7 @@ export class CronService {
       })
     );
 
+    // 2. SWEEP (Safe deletion: only if no attendance history exists)
     const { count: deletedCount } = await this.prisma.person.deleteMany({
       where: { 
         last_synced_at: { lt: syncStartTime },
