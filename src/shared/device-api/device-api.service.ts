@@ -3,11 +3,16 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as crypto from 'crypto';
 import * as https from 'https';
+import { Builder } from 'xml2js';
 
 @Injectable()
 export class DeviceApiService {
   private readonly logger = new Logger(DeviceApiService.name);
   private readonly httpsAgent = new https.Agent({ rejectUnauthorized: false });
+  private readonly xmlBuilder = new Builder({
+    renderOpts: { pretty: true, indent: '  ', newline: '\n' },
+    xmldec: { version: '1.0', encoding: 'UTF-8' },
+  });
 
   constructor(private readonly httpService: HttpService) {}
 
@@ -17,7 +22,8 @@ export class DeviceApiService {
     method: 'GET' | 'PUT' | 'POST',
     user: string,
     pass: string,
-    payload?: any
+    payload?: any,
+    contentType: 'json' | 'xml' = 'json',
   ) {
     const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
     const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
@@ -52,6 +58,14 @@ export class DeviceApiService {
       }
       throw this.formatError(error);
     }
+  }
+
+  private serializePayload(data: any, contentType: 'json' | 'xml'): string | object {
+    if (contentType !== 'xml') return data;
+
+    if (typeof data === 'string') return data;
+
+    return this.xmlBuilder.buildObject(data);
   }
 
   async sendMultipart(

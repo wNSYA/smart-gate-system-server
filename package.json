@@ -18,7 +18,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed:gate": "npx ts-node prisma/seed-gate.ts"
+    "seed:gate": "npx ts-node prisma/seed-gate.ts",
+    "seed:account": "npx ts-node prisma/seed-account.ts",
+    "seed:visitor": "npx ts-node prisma/seed-visitor.ts"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -44,7 +46,8 @@
     "passport-local": "^1.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -60,6 +63,7 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/passport-local": "^1.0.38",
     "@types/supertest": "^6.0.2",
+    "@types/xml2js": "^0.4.14",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",

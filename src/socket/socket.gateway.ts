@@ -83,4 +83,16 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   emitVisitUpdate(data: any) {
     this.server.emit('new_visit', data); 
   }
+
+  emitVisitStatusChanged(data: any) {
+    this.server.emit('visit_status_changed', data);
+  }
+
+  emitBulkVisitUpdate(data: any) {
+    this.server.emit('bulk_visits_updated', data);
+  }
+
+  emitEmergencyResolved(data: any) {
+    this.server.emit('emergency_resolved', data);
+  }
 }
