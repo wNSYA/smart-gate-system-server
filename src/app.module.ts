@@ -15,6 +15,7 @@ import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
 import { EtlModule } from './etl/etl.module';
 import { VisitsModule } from './visits/visits.module';
 import { DoorControlModule } from './door-control/door-control.module';
+import { EmployeesModule } from './employees/employees.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { DoorControlModule } from './door-control/door-control.module';
     EtlModule,
     VisitsModule,
     DoorControlModule
+    EmployeesModule
   ],
   controllers: [AppController],
   providers: [AppService],

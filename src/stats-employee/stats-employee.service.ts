@@ -37,15 +37,20 @@ export class EmployeeStatsService {
     });
   }
 
-  async getEmployeeStats() {
-    const today = dayjs().startOf('day').toDate();
-
+  async getEmployeeStats(dateParam?: string) {
     const totalEmployees = await this.prisma.person.count({
       where: { userType: UserType.normal }
     });
 
-    const logsToday = await this.prisma.access_record.findMany({
-      where: { time: { gte: today } },
+    // Default to 'Today' (WIB expected from frontend, but we handle fallback here)
+    const targetDate = dateParam ? dayjs(dateParam) : dayjs();
+    const startDate = targetDate.startOf('day');
+    const endDate = targetDate.endOf('day');
+
+    const logsTarget = await this.prisma.access_record.findMany({
+      where: {
+        time: { gte: startDate.toDate(), lte: endDate.toDate() }
+      },
       include: { 
         person: true,
         gate: { select: { name: true, direction: true } } 
@@ -53,89 +58,96 @@ export class EmployeeStatsService {
       orderBy: { time: 'asc' },
     });
 
-    const presentMap = new Map<string, any>();
-    const lateList: any[] = [];
+    let inCount = 0;
+    let outCount = 0;
     const anomalyList: any[] = [];
     
-    const firstEntryTimeToday = new Map<string, Date>();
-
-    // 2. Prepare Hourly Graph Data (Detailed: Success vs Anomaly)
-    const hourlyData = Array.from({ length: 24 }, (_, i) => ({ 
-      hour: `${i.toString().padStart(2, '0')}:00`, 
-      success: 0,
-      anomaly: 0 
+    // Fixed 0-23 Hourly Data (Calendar Day View)
+    const hourlyData = Array.from({ length: 24 }, (_, i) => ({
+      hour: `${i.toString().padStart(2, '0')}:00`,
+      in: 0, out: 0, anomaly: 0,
+      _hourValue: i
     }));
 
-    logsToday.forEach(log => {
-      const isSuccess = [1, 38, 75].includes(log.minor);
-      const isAnomaly = [39, 76, 80, 2].includes(log.minor);
+    const movementsMap = new Map<string, any>();
+
+    logsTarget.forEach(log => {
+      const info = this.minorInfoMap[log.minor] || { success: false, label: 'UNKNOWN', method: 'UNKNOWN' };
+      const isSuccess = info.success;
+      const isAnomaly = !isSuccess && this.allowedMinorCodes.includes(log.minor);
       const isNormalUser = log.person?.userType === UserType.normal;
       
-      const hour = new Date(log.time).getHours();
+      const logHour = dayjs(log.time).hour();
+      const slot = hourlyData[logHour];
 
-      if (log.person_id && isNormalUser) {
-        if (isSuccess && !presentMap.has(log.person_id)) {
-          presentMap.set(log.person_id, {
+      if (log.person_id && isNormalUser && isSuccess) {
+        if (!movementsMap.has(log.person_id)) {
+          movementsMap.set(log.person_id, {
             id: log.person_id,
             name: log.person?.name || 'Unknown',
-            time: log.time,
-            gate: log.gate?.name || 'Gate'
+            lastActivity: log.time,
+            events: [] 
           });
         }
 
-        if (isSuccess && !firstEntryTimeToday.has(log.person_id) && log.gate?.direction === GateDirection.IN) {
-          firstEntryTimeToday.set(log.person_id, log.time);
-          const entryTime = dayjs(log.time);
-          if (entryTime.hour() >= 9 && entryTime.minute() > 0) {
-            lateList.push({
-              id: log.person_id,
-              name: log.person?.name || 'Unknown',
-              time: log.time,
-              gate: log.gate?.name || 'Gate'
-            });
-          }
+        const personData = movementsMap.get(log.person_id);
+        personData.events.push({
+          time: log.time,
+          direction: log.gate?.direction || 'IN',
+          gate: log.gate?.name || 'Gate'
+        });
+        personData.lastActivity = log.time;
+
+        if (log.gate?.direction === GateDirection.IN) {
+          inCount++;
+          slot.in++;
+        } else {
+          outCount++;
+          slot.out++;
         }
       }
 
       if (isAnomaly) {
-        const info = this.minorInfoMap[log.minor] || { label: 'ANOMALI', method: 'UNKNOWN' };
         anomalyList.push({
+          ...log,
           id: log.person_id || 'UNKNOWN',
-          name: log.person?.name || 'Unknown Visitor',
+          name: log.person?.name || 'Anonymous Visitor',
           time: log.time,
           gate: log.gate?.name || 'Gate',
           type: info.label,
-          method: info.method
+          method: info.method,
+          statusLabel: info.label
         });
-        hourlyData[hour].anomaly++;
-      } else if (isSuccess && isNormalUser) {
-        hourlyData[hour].success++;
+        slot.anomaly++;
       }
     });
 
-    const recentLogs = logsToday
-      .filter(l => [1, 38, 75].includes(l.minor) && l.person?.userType === UserType.normal)
-      .reverse()
-      .slice(0, 5)
-      .map(l => ({
-        ...l,
-        statusLabel: 'AKSES SUKSES',
-        isSuccess: true,
-        name: l.person?.name || 'Unknown'
-      }));
+    const finalMovements = Array.from(movementsMap.values())
+      .map(m => ({
+        ...m,
+        events: m.events.sort((a: any, b: any) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      }))
+      .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
 
     return {
       totalEmployees,
-      presentToday: presentMap.size,
-      lateCount: lateList.length,
+      inCount,
+      outCount,
       anomalies: anomalyList.length,
       details: {
-        present: Array.from(presentMap.values()),
-        late: lateList,
-        anomalies: anomalyList.reverse().slice(0, 50)
+        movements: finalMovements, 
+        anomalies: anomalyList.reverse()
       },
       hourlyGraph: hourlyData,
-      recentLogs,
+      recentLogs: logsTarget.reverse().slice(0, 10).map(l => {
+        const info = this.minorInfoMap[l.minor] || { success: false, label: 'UNKNOWN', method: 'UNKNOWN' };
+        return {
+          ...l,
+          statusLabel: info.success ? `SUKSES (${info.method})` : `${info.label} (${info.method})`,
+          isSuccess: info.success,
+          name: l.person?.name || (info.success ? 'Unknown' : 'Anonymous Visitor')
+        };
+      }),
     };
   }
 
@@ -144,10 +156,7 @@ export class EmployeeStatsService {
     const skip = (page - 1) * limit;
 
     const where: any = {
-      AND: [
-        { person: { userType: UserType.normal } },
-        { minor: { in: this.allowedMinorCodes } }
-      ]
+      AND: [{ minor: { in: this.allowedMinorCodes } }]
     };
 
     if (search) {
@@ -177,83 +186,101 @@ export class EmployeeStatsService {
       this.prisma.access_record.count({ where })
     ]);
 
-    const formattedData = await Promise.all(data.map(async (log) => {
+    const formattedData = data.map(log => {
       const info = this.minorInfoMap[log.minor] || { method: 'UNKNOWN', success: false, label: 'UNKNOWN' };
-      
-      let isLate = false;
-      if (log.gate?.direction === GateDirection.IN && info.success && log.person_id) {
-        const dayStart = dayjs(log.time).startOf('day').toDate();
-        const earlierEntry = await this.prisma.access_record.findFirst({
-          where: {
-            person_id: log.person_id,
-            time: { gte: dayStart, lt: log.time },
-            minor: { in: [1, 38, 75] },
-            gate: { direction: GateDirection.IN }
-          }
-        });
-
-        if (!earlierEntry) {
-          const entryTime = dayjs(log.time);
-          if (entryTime.hour() >= 9 && entryTime.minute() > 0) {
-            isLate = true;
-          }
-        }
-      }
-
       return {
         ...log,
         statusLabel: info.success ? `AKSES (${info.method})` : `${info.label} (${info.method})`,
         isSuccess: info.success,
-        name: log.person?.name || 'Unknown',
-        isLate
+        name: log.person?.name || (info.success ? 'Unknown' : 'Anonymous Visitor')
       };
-    }));
+    });
 
     return { data: formattedData, meta: { total, page: Number(page), lastPage: Math.ceil(total / limit) } };
   }
 
   async exportLogs(query: { search?: string; startDate?: string; endDate?: string }) {
     const { search, startDate, endDate } = query;
+    const targetDateStr = startDate ? dayjs(startDate).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+
     const where: any = {
-      AND: [
-        { person: { userType: UserType.normal } },
-        { minor: { in: this.allowedMinorCodes } }
-      ]
+      AND: [{ minor: { in: this.allowedMinorCodes } }]
     };
     if (search) {
-      where.AND.push({
-        OR: [ { person_id: { contains: search, mode: 'insensitive' } }, { person: { name: { contains: search, mode: 'insensitive' } } } ]
-      });
-    }
-    if (startDate || endDate) {
-      where.AND.push({ time: { gte: startDate ? dayjs(startDate).startOf('day').toDate() : undefined, lte: endDate ? dayjs(endDate).endOf('day').toDate() : undefined } });
+      where.AND.push({ OR: [ { person_id: { contains: search, mode: 'insensitive' } }, { person: { name: { contains: search, mode: 'insensitive' } } } ] });
     }
 
-    const logs = await this.prisma.access_record.findMany({ 
-      where, 
-      orderBy: { time: 'asc' }, 
-      include: { person: true, gate: true } 
+    // Force a date range: Use provided dates OR default to Today
+    const start = startDate ? dayjs(startDate).startOf('day') : dayjs().startOf('day');
+    const end = endDate ? dayjs(endDate).endOf('day') : dayjs();
+    
+    where.AND.push({ 
+      time: { 
+        gte: start.toDate(), 
+        lte: end.toDate() 
+      } 
     });
 
-    const firstEntryMap = new Set<string>(); 
-    let csvContent = "\uFEFFWaktu,ID Karyawan,Nama,Metode,Status,Gerbang,Keterangan\n";
+    const [logs, totalEmployees] = await Promise.all([
+      this.prisma.access_record.findMany({ where, orderBy: { time: 'asc' }, include: { person: true, gate: true } }),
+      this.prisma.person.count({ where: { userType: UserType.normal } })
+    ]);
 
-    for (const log of logs) {
-      const info = this.minorInfoMap[log.minor] || { method: 'UNKNOWN', success: false, label: 'UNKNOWN' };
-      const dateKey = `${log.person_id}_${dayjs(log.time).format('YYYY-MM-DD')}`;
-      
-      let keterangan = info.label;
-      if (log.gate?.direction === GateDirection.IN && info.success && log.person_id) {
-         if (!firstEntryMap.has(dateKey)) {
-           firstEntryMap.add(dateKey);
-           if (dayjs(log.time).hour() >= 9 && dayjs(log.time).minute() > 0) {
-             keterangan = "TERLAMBAT";
-           }
-         }
+    const hourlyTraffic = Array.from({ length: 24 }, (_, i) => ({ 
+      hour: `${i.toString().padStart(2, '0')}:00`, in: 0, out: 0, ano: 0 
+    }));
+
+    let inCount = 0; let outCount = 0; let anomalies = 0;
+    
+    logs.forEach(l => {
+      const hour = new Date(l.time).getHours();
+      const info = this.minorInfoMap[l.minor] || { success: false };
+      if (info.success) {
+        if (l.gate?.direction === 'IN') { inCount++; hourlyTraffic[hour].in++; } 
+        else { outCount++; hourlyTraffic[hour].out++; }
+      } else { 
+        anomalies++; 
+        hourlyTraffic[hour].ano++;
       }
+    });
 
-      csvContent += `"${dayjs(log.time).format('YYYY-MM-DD HH:mm:ss')}","${log.person_id}","${log.person?.name || 'Unknown'}","${info.method}","${info.label}","${log.gate?.name || '-'}","${keterangan}"\n`;
-    }
+    let csvContent = "\uFEFF=== LAPORAN DASHBOARD HARIAN ===\n";
+    csvContent += `Tanggal Report,${targetDateStr}\n`;
+    csvContent += `Total Karyawan,${totalEmployees}\n`;
+    csvContent += `Total Masuk (IN),${inCount}\n`;
+    csvContent += `Total Keluar (OUT),${outCount}\n`;
+    csvContent += `Total Anomali,${anomalies}\n\n`;
+
+    csvContent += "=== RINGKASAN TRAFIK PER JAM ===\n";
+    csvContent += "Jam,Masuk (IN),Keluar (OUT),Anomali\n";
+    hourlyTraffic.forEach(h => {
+      csvContent += `${h.hour},${h.in},${h.out},${h.ano}\n`;
+    });
+    csvContent += "\n";
+
+    csvContent += "=== RINCIAN PERGERAKAN KARYAWAN ===\n";
+    csvContent += "ID,Nama,Masuk Pertama,Keluar Terakhir,Total Aktivitas,Timeline Pergerakan\n";
+
+    const personMap = new Map<string, any>();
+    logs.forEach(log => {
+      if (!log.person_id) return;
+      const info = this.minorInfoMap[log.minor] || { success: false };
+      if (!info.success) return;
+
+      if (!personMap.has(log.person_id)) {
+        personMap.set(log.person_id, { id: log.person_id, name: log.person?.name || 'Unknown', events: [] });
+      }
+      const p = personMap.get(log.person_id);
+      p.events.push(`${log.gate?.direction === 'IN' ? 'MASUK' : 'KELUAR'} (${dayjs(log.time).format('HH:mm')})`);
+    });
+
+    personMap.forEach(p => {
+      const firstIn = p.events.find((e: string) => e.startsWith('MASUK')) || '-';
+      const lastOut = [...p.events].reverse().find((e: string) => e.startsWith('KELUAR')) || '-';
+      const timeline = p.events.join(' -> ');
+      csvContent += `"${p.id}","${p.name}","${firstIn}","${lastOut}","${p.events.length}","${timeline}"\n`;
+    });
+
     return csvContent;
   }
 }
