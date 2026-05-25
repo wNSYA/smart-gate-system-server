@@ -1,89 +1,166 @@
-import { Injectable, HttpException, Logger } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as crypto from 'crypto';
 import * as https from 'https';
+import { Builder } from 'xml2js';
 
 @Injectable()
 export class DeviceApiService {
   private readonly logger = new Logger(DeviceApiService.name);
   private readonly httpsAgent = new https.Agent({ rejectUnauthorized: false });
+  private readonly xmlBuilder = new Builder({
+    renderOpts: { pretty: true, indent: '  ', newline: '\n' },
+    xmldec: { version: '1.0', encoding: 'UTF-8' },
+  });
 
   constructor(private readonly httpService: HttpService) {}
 
-  // Master function for all device communication
-async sendCommand(
+  async sendCommand(
     ipAddress: string,
     route: string,
     method: 'GET' | 'PUT' | 'POST',
     user: string,
     pass: string,
-    payload?: any
+    payload?: any,
+    contentType: 'json' | 'xml' = 'json',
   ) {
-    // --- NEW LOGIC: Ensure the IP has a protocol ---
-    const formattedIp = ipAddress.startsWith('http') 
-      ? ipAddress 
-      : `http://${ipAddress}`;
-
-    // Now use formattedIp instead of ipAddress
-    const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
-
-    try {
-      return await this.executeHttp(url, method, payload);
-    } catch (error: any) {
-      if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
-        const authHeader = error.response.headers['www-authenticate'];
-        const digest = this.generateDigestAuth(authHeader, url, method, user, pass);
-        
-        return await this.executeHttp(url, method, payload, digest);
-      }
-      
-      // I also recommend improving the error log here to catch the "Invalid URL" early next time
-      throw new HttpException(
-        `Device Error: ${error.message || 'Unknown network error'}`, 
-        error.response?.status || 500
-      );
-    }
-  }
-
-  private async executeHttp(url: string, method: string, data?: any, authHeader?: string, responseType: 'json' | 'arraybuffer' = 'json') {
-    const headers: Record<string, string> = {};
-    if (data && responseType === 'json') headers['Content-Type'] = 'application/json';
-    if (authHeader) headers['Authorization'] = authHeader;
-
-    const response = await firstValueFrom(
-      this.httpService.request({
-        url,
-        method,
-        data,
-        headers,
-        responseType,
-        httpsAgent: this.httpsAgent,
-        timeout: 10000, // Increased timeout for images
-      })
-    );
-    return response.data;
-  }
-
-  // Add a specific method for binary download
-  async downloadBinary(
-    ipAddress: string,
-    route: string,
-    user: string,
-    pass: string
-  ): Promise<Buffer> {
     const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
     const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
 
+    const execute = async (auth?: string) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (auth) headers['Authorization'] = auth;
+
+      const response = await firstValueFrom(
+        this.httpService.request({
+          url,
+          method,
+          data: payload,
+          headers,
+          httpsAgent: this.httpsAgent,
+          timeout: 60000,
+        })
+      );
+      return response.data;
+    };
+
     try {
-      const data = await this.executeHttp(url, 'GET', null, undefined, 'arraybuffer');
-      return Buffer.from(data);
+      return await execute();
     } catch (error: any) {
       if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
-        const authHeader = error.response.headers['www-authenticate'];
-        const digest = this.generateDigestAuth(authHeader, url, 'GET', user, pass);
-        const data = await this.executeHttp(url, 'GET', null, digest, 'arraybuffer');
-        return Buffer.from(data);
+        const digest = this.generateDigestAuth(error.response.headers['www-authenticate'], url, method, user, pass);
+        try {
+          return await execute(digest);
+        } catch (retryError: any) {
+          throw this.formatError(retryError);
+        }
+      }
+      throw this.formatError(error);
+    }
+  }
+
+  private serializePayload(data: any, contentType: 'json' | 'xml'): string | object {
+    if (contentType !== 'xml') return data;
+
+    if (typeof data === 'string') return data;
+
+    return this.xmlBuilder.buildObject(data);
+  }
+
+  async sendMultipart(
+    ipAddress: string,
+    route: string,
+    user: string,
+    pass: string,
+    jsonString: string,
+    fileBuffer: Buffer
+  ) {
+    const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
+    const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
+    const boundary = `----HikvisionISAPIBoundary${crypto.randomBytes(4).toString('hex')}`;
+
+    // --- GHOST MULTIPART STRATEGY ---
+    // Minimal headers for the metadata part, as V4.x often chokes on internal content-types
+    const part1 = 
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="faceDataRecord"\r\n\r\n` + // No Content-Type!
+      `${jsonString}\r\n`;
+
+    const part2Headers = 
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="img"; filename="face.jpg"\r\n` +
+      `Content-Type: image/jpeg\r\n\r\n`;
+
+    const footer = `\r\n--${boundary}--\r\n`;
+
+    const payloadBuffer = Buffer.concat([
+      Buffer.from(part1, 'utf8'),
+      Buffer.from(part2Headers, 'utf8'),
+      fileBuffer,
+      Buffer.from(footer, 'utf8')
+    ]);
+
+    const execute = async (auth?: string) => {
+      const headers: Record<string, string> = {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': payloadBuffer.length.toString(),
+        'Connection': 'keep-alive'
+      };
+      if (auth) headers['Authorization'] = auth;
+
+      const response = await firstValueFrom(
+        this.httpService.post(url, payloadBuffer, {
+          headers,
+          httpsAgent: this.httpsAgent,
+          timeout: 60000,
+        })
+      );
+      return response.data;
+    };
+
+    try {
+      return await execute();
+    } catch (error: any) {
+      if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
+        const digest = this.generateDigestAuth(error.response.headers['www-authenticate'], url, 'POST', user, pass);
+        try {
+          return await execute(digest);
+        } catch (retryError: any) {
+          throw this.formatError(retryError);
+        }
+      }
+      throw this.formatError(error);
+    }
+  }
+
+  private formatError(error: any): Error {
+    if (error.response && error.response.data) {
+      const body = error.response.data;
+      const detail = typeof body === 'string' ? body : JSON.stringify(body);
+      return new Error(`[ISAPI ${error.response.status}] Body: ${detail}`);
+    }
+    return new Error(error.message || 'Unknown network error');
+  }
+
+  async downloadBinary(ipAddress: string, route: string, user: string, pass: string): Promise<Buffer> {
+    const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
+    const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
+    
+    const execute = async (auth?: string) => {
+       const headers = auth ? { 'Authorization': auth } : {};
+       const response = await firstValueFrom(
+         this.httpService.get(url, { headers, responseType: 'arraybuffer', httpsAgent: this.httpsAgent, timeout: 30000 })
+       );
+       return Buffer.from(response.data);
+    };
+
+    try {
+      return await execute();
+    } catch (error: any) {
+      if (error.response?.status === 401 && error.response.headers['www-authenticate']) {
+        const digest = this.generateDigestAuth(error.response.headers['www-authenticate'], url, 'GET', user, pass);
+        return await execute(digest);
       }
       throw error;
     }
@@ -94,20 +171,14 @@ async sendCommand(
     const realm = getMatch(/realm="([^"]+)"/);
     const nonce = getMatch(/nonce="([^"]+)"/);
     const qop = getMatch(/qop="([^"]+)"/) || getMatch(/qop=([^,]+)/);
-
     const md5 = (str: string) => crypto.createHash('md5').update(str).digest('hex');
     const ha1 = md5(`${user}:${realm}:${pass}`);
     const ha2 = md5(`${method}:${uri}`);
     const nc = '00000001';
     const cnonce = crypto.randomBytes(8).toString('hex');
-    
-    const response = qop 
-      ? md5(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`)
-      : md5(`${ha1}:${nonce}:${ha2}`);
-
+    const response = qop ? md5(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`) : md5(`${ha1}:${nonce}:${ha2}`);
     let digest = `Digest username="${user}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}"`;
     if (qop) digest += `, qop=${qop}, nc=${nc}, cnonce="${cnonce}"`;
-
     return digest;
   }
 }

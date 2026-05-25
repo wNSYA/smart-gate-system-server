@@ -31,7 +31,7 @@ export class CronService {
   @Cron(CronExpression.EVERY_10_SECONDS)
   async handleAccessRecordSync() {
     const now = dayjs();
-    const startTimeStr = now.startOf('day').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.subtract(8, 'hour').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     const gates = await this.prisma.gate.findMany({
@@ -46,6 +46,8 @@ export class CronService {
       this.logger.debug('No configured gates found for access record sync.');
       return;
     }
+
+    this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
     this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
@@ -86,6 +88,7 @@ export class CronService {
   async handlePersonSync() {
     this.logger.log('[Person Sync] Starting periodic person synchronization...');
     const sessionSearchID = "sync_" + randomUUID();
+
     const personTask = {
       route: '/ISAPI/AccessControl/UserInfo/Search', 
       params: { format: 'json' },
@@ -99,11 +102,12 @@ export class CronService {
       syncType: 'person',
       dataPath: 'UserInfoSearch.UserInfo'
     };
+
     await this.processSingleTask(personTask);
   }
 
   // ====================================================================
-  // 3. MIDNIGHT RESET
+  // 3. MIDNIGHT RESET SIGNAL
   // ====================================================================
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleMidnightReset() {
@@ -112,7 +116,7 @@ export class CronService {
   }
 
   // ====================================================================
-  // ENGINE
+  // ENGINE: CORE PROCESSING
   // ====================================================================
   private async processSingleTask(task: any, gate?: any) {
     const identifier = gate ? gate.name : 'System';
@@ -161,7 +165,7 @@ export class CronService {
       }
       
     } catch (error: any) {
-      this.logger.error(`[${task.syncType} - ${identifier}] Sync fail: ${error.message}`);
+      this.logger.error(`[${task.syncType} - ${identifier}] Task fail: ${error.message}`);
     }
   }
 
@@ -178,10 +182,13 @@ export class CronService {
         this.socketGateway.emitEventUpdate({ count: fetchedItems.length }); 
       } 
     } catch (error) {
-      this.logger.error(`[${syncType}] DB save fail:`, error);
+      this.logger.error(`[${syncType}] Database operation fail:`, error);
     }
   }
 
+  // ====================================================================
+  // 1. PERSON SYNC (Mark & Sweep Strategy)
+  // ====================================================================
   private async syncPeople(items: any[], syncStartTime: Date) {
     // 1. UPSERT
     await this.prisma.$transaction(
@@ -216,73 +223,84 @@ export class CronService {
     this.logger.log(`[Person Sync] DONE. ${items.length} items upserted, ${deletedCount} removed (Sweep).`);
   }
 
+  // ====================================================================
+  // 2. ACCESS RECORD SYNC (Safe FK Handling + Anomaly Snapshots)
+  // ====================================================================
   private async syncAccessRecords(items: any[], gateId?: string, gateObj?: any, searchId?: string) {
-    await this.prisma.$transaction(
-      items.map((item) => {
-        const mappedData = {
-          major: item.major,
-          minor: item.minor,
-          time: new Date(item.time),
-          person_id: item.employeeNoString || null, 
-          gate_id: gateId || null
-        };
-        const serialNoString = String(item.serialNo);
-        return this.prisma.access_record.upsert({
-          where: { serialNo: serialNoString },
-          update: mappedData,
-          create: { serialNo: serialNoString, ...mappedData },
-        });
-      })
-    );
+    let downloadCount = 0;
+    const successMinorCodes = [1, 38, 75]; 
+    const knownPersons = new Set<string>();
 
-    this.logger.log(`[Access Record Sync] DONE. ${items.length} records processed for Gate ID: ${gateId}`);
-
-    if (gateObj && searchId && items.length > 0) {
-      this.logger.debug(`[Snapshot Debug] Raw item keys: ${Object.keys(items[0]).join(', ')}`);
-      
-      const picCount = items.filter(i => i.picPresent || i.isPicRetrieved).length;
-      
-      if (picCount > 0) {
-        this.logger.log(`[Snapshot Engine] Detected ${picCount} events with pictures. Downloading...`);
-        this.downloadSnapshots(items, gateObj, searchId).catch(err => 
-          this.logger.error(`[Snapshot Engine] Background download failed: ${err.message}`)
-        );
-      }
-    }
-  }
-
-  private async downloadSnapshots(items: any[], gateObj: any, searchId: string) {
-    let successCount = 0;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (!item.picPresent && !item.isPicRetrieved) continue;
-
       const serialNoString = String(item.serialNo);
-      const snapshotFilename = `snap_${serialNoString}.jpg`;
-      const snapshotPath = path.join(this.snapshotDir, snapshotFilename);
-
-      if (fs.existsSync(snapshotPath)) continue;
-
-      try {
-        const picNum = i + 1;
-        const picUrl = `/ISAPI/AccessControl/AcsEvent/picture?format=json&searchID=${searchId}&picNum=${picNum}`;
-        const picBuffer = await this.deviceApi.downloadBinary(gateObj.ip_address, picUrl, gateObj.username, gateObj.password);
-
-        if (picBuffer && picBuffer.length > 500) {
-          fs.writeFileSync(snapshotPath, picBuffer);
-          await this.prisma.access_record.update({
-            where: { serialNo: serialNoString },
-            data: { snapshot_path: `/uploads/snapshots/${snapshotFilename}` }
-          });
-          successCount++;
-        }
-      } catch (err: any) {
-        this.logger.warn(`[Snapshot] Failed for ${serialNoString}: ${err.message}`);
+      const isAnomaly = !successMinorCodes.includes(item.minor);
+      const personId = item.employeeNoString || null;
+      
+      // A. ENSURE PERSON EXISTS (Avoid P2003 Foreign Key Error)
+      if (personId && !knownPersons.has(personId)) {
+        // Fast upsert to ensure the record exists in 'person' table before linking
+        await this.prisma.person.upsert({
+          where: { employeeNo: personId },
+          update: {}, // Do nothing if exists
+          create: {
+            employeeNo: personId,
+            name: item.name || 'Unknown Sync',
+            userType: 'normal'
+          }
+        });
+        knownPersons.add(personId);
       }
+
+      const mappedData: any = {
+        major: item.major,
+        minor: item.minor,
+        time: new Date(item.time),
+        person_id: personId, 
+        gate_id: gateId || null
+      };
+
+      // B. DOWNLOAD SNAPSHOT (Anomaly only)
+      if (isAnomaly && (item.picPresent || item.isPicRetrieved || item.pictureURL) && gateObj && searchId) {
+        const snapshotFilename = `snap_${serialNoString}.jpg`;
+        const snapshotPath = path.join(this.snapshotDir, snapshotFilename);
+
+        if (!fs.existsSync(snapshotPath)) {
+          try {
+            const picNum = i + 1;
+            let picUrl = `/ISAPI/AccessControl/AcsEvent/picture?format=json&searchID=${searchId}&picNum=${picNum}`;
+            
+            if (typeof item.pictureURL === 'string' && item.pictureURL.length > 5) {
+                if (item.pictureURL.startsWith('http')) {
+                   const urlObj = new URL(item.pictureURL);
+                   picUrl = urlObj.pathname + urlObj.search;
+                } else {
+                   picUrl = item.pictureURL;
+                }
+            }
+
+            const picBuffer = await this.deviceApi.downloadBinary(gateObj.ip_address, picUrl, gateObj.username, gateObj.password);
+
+            if (picBuffer && picBuffer.length > 500) {
+              fs.writeFileSync(snapshotPath, picBuffer);
+              mappedData.snapshot_path = `/uploads/snapshots/${snapshotFilename}`;
+              downloadCount++;
+            }
+          } catch (err: any) {
+            this.logger.debug(`[Snapshot] Fail for ${serialNoString}: ${err.message}`);
+          }
+        }
+      }
+
+      // C. SAVE ACCESS RECORD
+      await this.prisma.access_record.upsert({
+        where: { serialNo: serialNoString },
+        update: mappedData,
+        create: { serialNo: serialNoString, ...mappedData },
+      });
     }
-    if (successCount > 0) {
-      this.logger.log(`[Snapshot Engine] Successfully downloaded ${successCount} new snapshots for ${gateObj.name}.`);
-    }
+
+    this.logger.log(`[Access Record Sync] DONE. ${items.length} records processed, ${downloadCount} snapshots retrieved for Gate: ${gateObj?.name}`);
   }
 
   async executeDigestTask(route: string, params?: any, data?: any, gate?: any) {
