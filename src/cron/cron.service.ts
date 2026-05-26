@@ -12,7 +12,10 @@ import * as path from 'path';
 @Injectable()
 export class CronService {
   private readonly logger = new Logger(CronService.name);
-  private readonly snapshotDir = path.join(process.cwd(), 'uploads', 'snapshots');
+  
+  // Define separated directories (Keeping the original path for anomalies to prevent breaking other systems)
+  private readonly snapshotAnomalyDir = path.join(process.cwd(), 'uploads', 'snapshots');
+  private readonly snapshotSuccessDir = path.join(process.cwd(), 'uploads', 'success');
 
   constructor(
     private readonly prisma: PrismaService,
@@ -20,8 +23,12 @@ export class CronService {
     private readonly socketGateway: SocketGateway,
     private readonly deviceApi: DeviceApiService,
   ) {
-    if (!fs.existsSync(this.snapshotDir)) {
-      fs.mkdirSync(this.snapshotDir, { recursive: true });
+    // Create both directories if they do not exist
+    if (!fs.existsSync(this.snapshotAnomalyDir)) {
+      fs.mkdirSync(this.snapshotAnomalyDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.snapshotSuccessDir)) {
+      fs.mkdirSync(this.snapshotSuccessDir, { recursive: true });
     }
   }
 
@@ -46,8 +53,6 @@ export class CronService {
       this.logger.debug('No configured gates found for access record sync.');
       return;
     }
-
-    this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
     this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
 
@@ -224,7 +229,7 @@ export class CronService {
   }
 
   // ====================================================================
-  // 2. ACCESS RECORD SYNC (Safe FK Handling + Anomaly Snapshots)
+  // 2. ACCESS RECORD SYNC (Safe FK Handling + Snapshot Routing)
   // ====================================================================
   private async syncAccessRecords(items: any[], gateId?: string, gateObj?: any, searchId?: string) {
     let downloadCount = 0;
@@ -260,10 +265,15 @@ export class CronService {
         gate_id: gateId || null
       };
 
-      // B. DOWNLOAD SNAPSHOT (Anomaly only)
-      if (isAnomaly && (item.picPresent || item.isPicRetrieved || item.pictureURL) && gateObj && searchId) {
+      // B. DOWNLOAD SNAPSHOT (For Both Anomaly and Success)
+      if ((item.picPresent || item.isPicRetrieved || item.pictureURL) && gateObj && searchId) {
+        
+        // Target the legacy directory for anomalies, and the new directory for successes
+        const targetDir = isAnomaly ? this.snapshotAnomalyDir : this.snapshotSuccessDir;
+        const urlPrefix = isAnomaly ? '/uploads/snapshots' : '/uploads/success';
+
         const snapshotFilename = `snap_${serialNoString}.jpg`;
-        const snapshotPath = path.join(this.snapshotDir, snapshotFilename);
+        const snapshotPath = path.join(targetDir, snapshotFilename);
 
         if (!fs.existsSync(snapshotPath)) {
           try {
@@ -283,7 +293,9 @@ export class CronService {
 
             if (picBuffer && picBuffer.length > 500) {
               fs.writeFileSync(snapshotPath, picBuffer);
-              mappedData.snapshot_path = `/uploads/snapshots/${snapshotFilename}`;
+              
+              // Save the distinct URL path in the database depending on the event type
+              mappedData.snapshot_path = `${urlPrefix}/${snapshotFilename}`;
               downloadCount++;
             }
           } catch (err: any) {

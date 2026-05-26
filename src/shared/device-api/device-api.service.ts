@@ -28,15 +28,19 @@ export class DeviceApiService {
     const formattedIp = ipAddress.startsWith('http') ? ipAddress : `http://${ipAddress}`;
     const url = `${formattedIp.replace(/\/$/, '')}${route.startsWith('/') ? route : `/${route}`}`;
 
+    // FIX: serialize payload and resolve the correct Content-Type header
+    const serializedPayload = payload ? this.serializePayload(payload, contentType) : undefined;
+    const contentTypeHeader = contentType === 'xml' ? 'application/xml' : 'application/json';
+
     const execute = async (auth?: string) => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = { 'Content-Type': contentTypeHeader };
       if (auth) headers['Authorization'] = auth;
 
       const response = await firstValueFrom(
         this.httpService.request({
           url,
           method,
-          data: payload,
+          data: serializedPayload,
           headers,
           httpsAgent: this.httpsAgent,
           timeout: 60000,

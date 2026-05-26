@@ -30,6 +30,46 @@ export class GateMonitorService implements OnModuleInit {
     return cachedData || [];
   }
 
+  // --- NEW: Infinite Scroll for Gate Logs (Open/Close Events & Remote Commands) ---
+  async getGateLogsScroll(limit: number = 50, cursorId?: string) {
+    const records = await this.prisma.access_record.findMany({
+      where: {
+        minor: { 
+          in: [
+            21,   // Gate Open (Physical/Normal)
+            22,   // Gate Closed (Physical/Normal)
+            1024, // 0x400 - Door Remotely Open
+            1025, // 0x401 - Door Remotely Closed
+            1026, // 0x402 - Remain Open Remotely
+            1027  // 0x403 - Remain Closed Remotely
+          ] 
+        } 
+      },
+      take: limit,
+      skip: cursorId ? 1 : 0, 
+      cursor: cursorId ? { serialNo: cursorId } : undefined,
+      include: { 
+        gate: true, 
+        person: true 
+      },
+      orderBy: { time: 'desc' }
+    });
+
+    let nextCursor: string | null = null;
+    if (records.length === limit) {
+      nextCursor = records[records.length - 1].serialNo;
+    }
+
+    return {
+      data: records,
+      meta: {
+        next_cursor: nextCursor,
+        has_more: nextCursor !== null,
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+
   // The Background Worker
   @Cron(CronExpression.EVERY_10_SECONDS)
   private async refreshGateStatuses() {
@@ -39,7 +79,6 @@ export class GateMonitorService implements OnModuleInit {
       let displayStatus = 'OFFLINE'; 
       let isOnline = false;
 
-      // Ensure required connection fields are present to satisfy TS and handle incomplete config
       if (!gate.ip_address || !gate.username || !gate.password) {
         return {
           id: gate.id,

@@ -2,7 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service'; 
-import { SocketGateway } from '../socket/socket.gateway'; // 1. Import Gateway
+import { SocketGateway } from '../socket/socket.gateway'; 
 
 @Injectable()
 export class EtlService {
@@ -11,7 +11,7 @@ export class EtlService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly socketGateway: SocketGateway // 2. Inject Gateway
+    private readonly socketGateway: SocketGateway
   ) {}
 
   @Cron(CronExpression.EVERY_10_SECONDS)
@@ -31,10 +31,10 @@ export class EtlService {
 
       this.logger.log(`Processing batch of ${unprocessedLogs.length} records...`);
 
-      // 3. Capture the updated/created visits returned by the transaction
+      // Capture the updated/created visits returned by the transaction
       const broadcastEvents = await this.runEtlTransaction(unprocessedLogs);
 
-      // 4. Broadcast each one to the frontend instantly!
+      // Broadcast each one to the frontend instantly!
       for (const event of broadcastEvents) {
         this.socketGateway.emitVisitUpdate(event);
       }
@@ -75,40 +75,60 @@ export class EtlService {
             if (secondsSinceEntry < 60) {
               continue; 
             } else {
-              // Update existing visit
+              // Update existing visit (Anomaly: Double IN)
               const updatedVisit = await tx.visit.update({
                 where: { id: activeVisit.id },
-                data: { exit_time: log.time, status: 'EXPIRED_SYSTEM' },
-                include: { person: true } // Include person for the frontend UI
+                data: { 
+                  exit_time: log.time, 
+                  status: 'EXPIRED_SYSTEM' 
+                  // We do NOT attach the snapshot here, because this log belongs to the NEW entry below
+                },
+                include: { person: true }
               });
-              eventsToBroadcast.push(updatedVisit); // Queue for broadcast
+              eventsToBroadcast.push(updatedVisit); 
             }
           }
           
-          // Create new visit
+          // Create new visit with the Entry Snapshot
           const newVisit = await tx.visit.create({
-            data: { person_id: personId, entry_time: log.time, status: 'ACTIVE' },
-            include: { person: true } // Include person for the frontend UI
+            data: { 
+              person_id: personId, 
+              entry_time: log.time, 
+              status: 'ACTIVE',
+              entry_snapshot_path: log.snapshot_path // <-- Store entry picture
+            },
+            include: { person: true } 
           });
           activeVisitsMap.set(personId, newVisit);
-          eventsToBroadcast.push(newVisit); // Queue for broadcast
+          eventsToBroadcast.push(newVisit); 
         }
         
         else if (isExit) {
           if (activeVisit) {
+            // Normal Exit
             const closedVisit = await tx.visit.update({
               where: { id: activeVisit.id },
-              data: { exit_time: log.time, status: 'COMPLETED' },
+              data: { 
+                exit_time: log.time, 
+                status: 'COMPLETED',
+                exit_snapshot_path: log.snapshot_path // <-- Store exit picture
+              },
               include: { person: true }
             });
             activeVisitsMap.delete(personId);
-            eventsToBroadcast.push(closedVisit); // Queue for broadcast
+            eventsToBroadcast.push(closedVisit); 
           } else {
+            // Orphaned Exit (Never scanned in)
             const orphanVisit = await tx.visit.create({
-              data: { person_id: personId, exit_time: log.time, status: 'COMPLETED' },
+              data: { 
+                person_id: personId, 
+                exit_time: log.time, 
+                status: 'COMPLETED',
+                exit_snapshot_path: log.snapshot_path // <-- Store exit picture
+              },
               include: { person: true }
             });
-            eventsToBroadcast.push(orphanVisit); // Queue for broadcast
+            eventsToBroadcast.push(orphanVisit); 
           }
         }
       }
@@ -128,7 +148,6 @@ export class EtlService {
   async cleanupGhostOccupants() {
     this.logger.log('Running 24-hour ghost occupant cleanup...');
 
-    // Calculate the cutoff time (24 hours ago)
     const cutoffTime = new Date();
     cutoffTime.setHours(cutoffTime.getHours() - 24);
 
@@ -138,13 +157,11 @@ export class EtlService {
           status: 'ACTIVE',
           exit_time: null,
           entry_time: {
-            lt: cutoffTime, // Less than (older than) 24 hours ago
+            lt: cutoffTime, 
           },
         },
         data: {
           status: 'EXPIRED_SYSTEM',
-          // We intentionally leave exit_time as NULL. 
-          // This tells emergency/dashboard systems: "They left, but we don't know exactly when."
         },
       });
 

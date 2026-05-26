@@ -89,14 +89,17 @@ model account {
 
 // 5. The Status/Visit Table
 model visit {
-  id         String    @id @default(uuid())
-  person_id  String    @db.VarChar(32)
-  person     person    @relation(fields: [person_id], references: [employeeNo])
+  id                  String      @id @default(uuid())
+  person_id           String      @db.VarChar(32)
+  person              person      @relation(fields: [person_id], references: [employeeNo])
 
-  entry_time DateTime? 
-  exit_time  DateTime? 
+  entry_time          DateTime? 
+  entry_snapshot_path String?     @db.VarChar(255)
 
-  status     VisitStatus @default(ACTIVE)
+  exit_time           DateTime? 
+  exit_snapshot_path  String?     @db.VarChar(255)
+
+  status              VisitStatus @default(ACTIVE)
 
   @@index([person_id])
   @@index([exit_time]) 

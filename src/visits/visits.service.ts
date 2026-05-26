@@ -2,7 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SocketGateway } from '../socket/socket.gateway'; 
-import { VisitStatus } from '@prisma/client';
+import { VisitStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class VisitsService {
@@ -13,7 +13,7 @@ export class VisitsService {
 
   // 2. Infinite Scroll (Used by frontend for initial load & pagination)
   async getVisitHistoryScroll(limit: number = 50, cursorId?: string, status?: string) {
-    const whereClause = status ? { status: status as any } : {};
+    const whereClause: Prisma.visitWhereInput = status ? { status: status as any } : {};
 
     const records = await this.prisma.visit.findMany({
       where: whereClause,
@@ -29,14 +29,24 @@ export class VisitsService {
       nextCursor = records[records.length - 1].id;
     }
 
+    // Map records to explicitly handle missing snapshots gracefully
+    const formattedData = records.map(record => ({
+      ...record,
+      // If there was no picture (e.g. card scan), this ensures it safely returns null
+      entry_snapshot_path: record.entry_snapshot_path || null,
+      exit_snapshot_path: record.exit_snapshot_path || null,
+    }));
+
     return {
-      data: records,
+      data: formattedData,
       meta: {
         next_cursor: nextCursor,
-        has_more: nextCursor !== null
+        has_more: nextCursor !== null,
+        timestamp: new Date().toISOString() // Database query timestamp
       }
     };
   }
+
   async updateVisitStatus(id: string, status: VisitStatus) {
     const updatedVisit = await this.prisma.visit.update({
       where: { id },
@@ -72,7 +82,8 @@ export class VisitsService {
 
     return {
       message: 'Emergency activated for all active visitors',
-      count: emergencyVisits.length
+      count: emergencyVisits.length,
+      timestamp: new Date().toISOString()
     };
   }
 
@@ -88,7 +99,6 @@ export class VisitsService {
         }
       }),
       // 2. Unaccounted for visitors (EMERGENCY) revert to ACTIVE 
-      // (Assuming false alarm or they are still inside. Change to COMPLETED if building is closed).
       this.prisma.visit.updateMany({
         where: { status: 'EMERGENCY' },
         data: { status: 'ACTIVE' }
@@ -98,9 +108,12 @@ export class VisitsService {
     // Tell the frontend the emergency is over so it can update the UI
     this.socketGateway.emitEmergencyResolved({
       message: 'Emergency resolved. Statuses reverted.',
-      timestamp: new Date()
+      timestamp: new Date().toISOString()
     });
 
-    return { message: 'Emergency resolved successfully' };
+    return { 
+      message: 'Emergency resolved successfully',
+      timestamp: new Date().toISOString()
+    };
   }
 }
