@@ -15,8 +15,8 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Serve static files from the uploads directory
-  app.use('/uploads', express.static(join(process.cwd(), 'uploads')));
+  // Public static routes removed for security. 
+  // Files are now served via EmployeesController with JwtAuthGuard.
 
   await app.listen(process.env.PORT ?? 3001);
 }

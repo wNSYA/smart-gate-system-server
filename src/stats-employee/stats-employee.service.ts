@@ -5,6 +5,12 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import * as fs from 'fs';
 import * as path from 'path';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const TZ = 'Asia/Jakarta';
 
 @Injectable()
 export class EmployeeStatsService {
@@ -29,11 +35,11 @@ export class EmployeeStatsService {
     const snapshotDir = path.join(process.cwd(), 'uploads', 'snapshots');
     if (!fs.existsSync(snapshotDir)) return;
     const files = fs.readdirSync(snapshotDir);
-    const thirtyDaysAgo = dayjs().subtract(30, 'days');
+    const thirtyDaysAgo = dayjs().tz(TZ).subtract(30, 'days');
     files.forEach(file => {
       const filePath = path.join(snapshotDir, file);
       const stats = fs.statSync(filePath);
-      if (dayjs(stats.mtime).isBefore(thirtyDaysAgo)) fs.unlinkSync(filePath);
+      if (dayjs(stats.mtime).tz(TZ).isBefore(thirtyDaysAgo)) fs.unlinkSync(filePath);
     });
   }
 
@@ -42,8 +48,8 @@ export class EmployeeStatsService {
       where: { userType: UserType.normal }
     });
 
-    // Default to 'Today' (WIB expected from frontend, but we handle fallback here)
-    const targetDate = dateParam ? dayjs(dateParam) : dayjs();
+    // Fix: Explicitly use Asia/Jakarta for date calculations
+    const targetDate = dateParam ? dayjs.tz(dateParam, TZ) : dayjs().tz(TZ);
     const startDate = targetDate.startOf('day');
     const endDate = targetDate.endOf('day');
 
@@ -77,7 +83,8 @@ export class EmployeeStatsService {
       const isAnomaly = !isSuccess && this.allowedMinorCodes.includes(log.minor);
       const isNormalUser = log.person?.userType === UserType.normal;
       
-      const logHour = dayjs(log.time).hour();
+      // Fix: Convert log time to Asia/Jakarta before getting hour
+      const logHour = dayjs(log.time).tz(TZ).hour();
       const slot = hourlyData[logHour];
 
       if (log.person_id && isNormalUser && isSuccess) {
@@ -171,8 +178,8 @@ export class EmployeeStatsService {
     if (startDate || endDate) {
       where.AND.push({
         time: {
-          gte: startDate ? dayjs(startDate).startOf('day').toDate() : undefined,
-          lte: endDate ? dayjs(endDate).endOf('day').toDate() : undefined,
+          gte: startDate ? dayjs.tz(startDate, TZ).startOf('day').toDate() : undefined,
+          lte: endDate ? dayjs.tz(endDate, TZ).endOf('day').toDate() : undefined,
         }
       });
     }
@@ -201,7 +208,7 @@ export class EmployeeStatsService {
 
   async exportLogs(query: { search?: string; startDate?: string; endDate?: string }) {
     const { search, startDate, endDate } = query;
-    const targetDateStr = startDate ? dayjs(startDate).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+    const targetDateStr = startDate ? dayjs.tz(startDate, TZ).format('YYYY-MM-DD') : dayjs().tz(TZ).format('YYYY-MM-DD');
 
     const where: any = {
       AND: [{ minor: { in: this.allowedMinorCodes } }]
@@ -211,8 +218,8 @@ export class EmployeeStatsService {
     }
 
     // Force a date range: Use provided dates OR default to Today
-    const start = startDate ? dayjs(startDate).startOf('day') : dayjs().startOf('day');
-    const end = endDate ? dayjs(endDate).endOf('day') : dayjs();
+    const start = startDate ? dayjs.tz(startDate, TZ).startOf('day') : dayjs().tz(TZ).startOf('day');
+    const end = endDate ? dayjs.tz(endDate, TZ).endOf('day') : dayjs().tz(TZ);
     
     where.AND.push({ 
       time: { 
@@ -233,7 +240,8 @@ export class EmployeeStatsService {
     let inCount = 0; let outCount = 0; let anomalies = 0;
     
     logs.forEach(l => {
-      const hour = new Date(l.time).getHours();
+      // Use Asia/Jakarta for export hours
+      const hour = dayjs(l.time).tz(TZ).hour();
       const info = this.minorInfoMap[l.minor] || { success: false };
       if (info.success) {
         if (l.gate?.direction === 'IN') { inCount++; hourlyTraffic[hour].in++; } 
@@ -271,7 +279,8 @@ export class EmployeeStatsService {
         personMap.set(log.person_id, { id: log.person_id, name: log.person?.name || 'Unknown', events: [] });
       }
       const p = personMap.get(log.person_id);
-      p.events.push(`${log.gate?.direction === 'IN' ? 'MASUK' : 'KELUAR'} (${dayjs(log.time).format('HH:mm')})`);
+      // format time in Asia/Jakarta
+      p.events.push(`${log.gate?.direction === 'IN' ? 'MASUK' : 'KELUAR'} (${dayjs(log.time).tz(TZ).format('HH:mm')})`);
     });
 
     personMap.forEach(p => {
