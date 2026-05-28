@@ -1,14 +1,17 @@
 // src/visits/visits.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SocketGateway } from '../socket/socket.gateway'; 
+import { DoorControlService } from '../door-control/door-control.service';
 import { VisitStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class VisitsService {
+  private readonly logger = new Logger(VisitsService.name);
   constructor(
     private readonly prisma: PrismaService,
-    private readonly socketGateway: SocketGateway 
+    private readonly socketGateway: SocketGateway,
+    private doorControlService: DoorControlService 
   ) {}
 
   // 2. Infinite Scroll (Used by frontend for initial load & pagination)
@@ -64,56 +67,90 @@ export class VisitsService {
    * 2. Trigger a Site-Wide Emergency
    * Moves all ACTIVE visitors to EMERGENCY status.
    */
-  async triggerSiteEmergency() {
-    // Update all active visitors in the DB
-    await this.prisma.visit.updateMany({
-      where: { status: 'ACTIVE' },
-      data: { status: 'EMERGENCY' }
-    });
+async triggerSiteEmergency() {
+    await this.prisma.$transaction([
+      this.prisma.visit.updateMany({
+        where: { status: 'ACTIVE' },
+        data: { status: 'EMERGENCY' }
+      }),
+      this.prisma.systemConfig.upsert({
+        where: { id: 'GLOBAL_CONFIG' },
+        update: { isEmergency: true },
+        create: { id: 'GLOBAL_CONFIG', isEmergency: true },
+      })
+    ]);
 
-    // Fetch the updated records to broadcast them
+    // 1. Physically unlock all doors via ISAPI asynchronously
+    this.openAllGatesSafely();
+
     const emergencyVisits = await this.prisma.visit.findMany({
       where: { status: 'EMERGENCY' },
       include: { person: true }
     });
 
-    // Broadcast massive update to all frontends (dashboards go red, alarms ring, etc.)
     this.socketGateway.emitBulkVisitUpdate(emergencyVisits);
+    this.socketGateway.emitEmergencyState(true);
 
     return {
-      message: 'Emergency activated for all active visitors',
+      message: 'Emergency activated. Gates commanded to alwaysOpen.',
       count: emergencyVisits.length,
       timestamp: new Date().toISOString()
     };
   }
 
   async resolveSiteEmergency() {
-    // Use a transaction to ensure both updates succeed or fail together
     await this.prisma.$transaction([
-      // 1. Evacuated visitors are marked COMPLETED and given an exit_time
       this.prisma.visit.updateMany({
         where: { status: 'EVACUATED' },
-        data: { 
-          status: 'COMPLETED',
-          exit_time: new Date() // They are safely out, visit is over
-        }
+        data: { status: 'COMPLETED', exit_time: new Date() }
       }),
-      // 2. Unaccounted for visitors (EMERGENCY) revert to ACTIVE 
       this.prisma.visit.updateMany({
         where: { status: 'EMERGENCY' },
         data: { status: 'ACTIVE' }
+      }),
+      this.prisma.systemConfig.upsert({
+        where: { id: 'GLOBAL_CONFIG' },
+        update: { isEmergency: false },
+        create: { id: 'GLOBAL_CONFIG', isEmergency: false },
       })
     ]);
 
-    // Tell the frontend the emergency is over so it can update the UI
+    // 1. Physically lock doors / return to normal via ISAPI
+    this.closeAllGatesSafely();
+
     this.socketGateway.emitEmergencyResolved({
       message: 'Emergency resolved. Statuses reverted.',
       timestamp: new Date().toISOString()
     });
+    this.socketGateway.emitEmergencyState(false);
 
     return { 
-      message: 'Emergency resolved successfully',
+      message: 'Emergency resolved. Gates returning to close status.',
       timestamp: new Date().toISOString()
     };
+  }
+
+  // --- Non-Blocking Hardware Orchestration ---
+
+  private async openAllGatesSafely() {
+    try {
+      // Hikvision standard for fire alarms/emergencies
+      await this.doorControlService.controlAllDoors('alwaysOpen'); 
+      this.logger.log('CRITICAL: All gates commanded to alwaysOpen.');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.stack : String(error);
+      this.logger.error('CRITICAL: Failed to open gates during emergency', errorMessage);
+    }
+  }
+
+  private async closeAllGatesSafely() {
+    try {
+      // Returns them to their standard locked state (card swipe required)
+      await this.doorControlService.controlAllDoors('close'); 
+      this.logger.log('All gates commanded to close after emergency resolution.');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.stack : String(error);
+      this.logger.error('Failed to close gates during resolution', errorMessage);
+    }
   }
 }

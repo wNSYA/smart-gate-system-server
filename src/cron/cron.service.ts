@@ -38,7 +38,7 @@ export class CronService {
   @Cron(CronExpression.EVERY_10_SECONDS)
   async handleAccessRecordSync() {
     const now = dayjs();
-    const startTimeStr = now.subtract(8, 'hour').format('YYYY-MM-DDTHH:mm:ss+07:00');
+    const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
     const gates = await this.prisma.gate.findMany({
@@ -231,10 +231,16 @@ export class CronService {
   // ====================================================================
   // 2. ACCESS RECORD SYNC (Safe FK Handling + Snapshot Routing)
   // ====================================================================
+// ====================================================================
+  // 2. ACCESS RECORD SYNC (Safe FK Handling + Snapshot Routing)
+  // ====================================================================
   private async syncAccessRecords(items: any[], gateId?: string, gateObj?: any, searchId?: string) {
     let downloadCount = 0;
     const successMinorCodes = [1, 38, 75]; 
     const knownPersons = new Set<string>();
+    
+    // Gate minors we want to show on the live Gate Logs dashboard
+    const gateLogMinors = [21, 22, 1024, 1025, 1026, 1027]; 
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -244,10 +250,9 @@ export class CronService {
       
       // A. ENSURE PERSON EXISTS (Avoid P2003 Foreign Key Error)
       if (personId && !knownPersons.has(personId)) {
-        // Fast upsert to ensure the record exists in 'person' table before linking
         await this.prisma.person.upsert({
           where: { employeeNo: personId },
-          update: {}, // Do nothing if exists
+          update: {}, 
           create: {
             employeeNo: personId,
             name: item.name || 'Unknown Sync',
@@ -267,8 +272,6 @@ export class CronService {
 
       // B. DOWNLOAD SNAPSHOT (For Both Anomaly and Success)
       if ((item.picPresent || item.isPicRetrieved || item.pictureURL) && gateObj && searchId) {
-        
-        // Target the legacy directory for anomalies, and the new directory for successes
         const targetDir = isAnomaly ? this.snapshotAnomalyDir : this.snapshotSuccessDir;
         const urlPrefix = isAnomaly ? '/uploads/snapshots' : '/uploads/success';
 
@@ -293,8 +296,6 @@ export class CronService {
 
             if (picBuffer && picBuffer.length > 500) {
               fs.writeFileSync(snapshotPath, picBuffer);
-              
-              // Save the distinct URL path in the database depending on the event type
               mappedData.snapshot_path = `${urlPrefix}/${snapshotFilename}`;
               downloadCount++;
             }
@@ -305,11 +306,20 @@ export class CronService {
       }
 
       // C. SAVE ACCESS RECORD
-      await this.prisma.access_record.upsert({
+      const savedRecord = await this.prisma.access_record.upsert({
         where: { serialNo: serialNoString },
         update: mappedData,
         create: { serialNo: serialNoString, ...mappedData },
+        // IMPORTANT: Include relationships so the frontend has the gate name & person name
+        include: { gate: true, person: true } 
       });
+
+      // D. NEW: WEBSOCKET BROADCAST FOR GATE LOGS
+      if (gateLogMinors.includes(savedRecord.minor)) {
+        if (typeof this.socketGateway.emitNewGateLog === 'function') {
+          this.socketGateway.emitNewGateLog(savedRecord);
+        }
+      }
     }
 
     this.logger.log(`[Access Record Sync] DONE. ${items.length} records processed, ${downloadCount} snapshots retrieved for Gate: ${gateObj?.name}`);

@@ -8,6 +8,7 @@ import { DeviceApiModule } from '../shared/device-api/device-api.module';
     DeviceApiModule,
   ],
   providers: [DoorControlService],
-  controllers: [DoorControlController]
+  controllers: [DoorControlController],
+  exports: [DoorControlService]
 })
 export class DoorControlModule {}

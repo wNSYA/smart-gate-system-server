@@ -11,7 +11,7 @@ export class DoorControlController {
     @Param('id', ParseIntPipe) id: number,
     @Body('action') action: 'open' | 'close',
   ) {
-    if (!action || !['open', 'close', 'alwaysOpen', 'alwaysClosed'].includes(action)) {
+    if (!action || !['open', 'close', 'alwaysOpen', 'alwaysClose'].includes(action)) {
       throw new BadRequestException('action must be "open" or "close"');
     }
 
