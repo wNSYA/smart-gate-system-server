@@ -7,10 +7,11 @@ async function main() {
  console.log('Start seeding gates...')
 
   const gateIP = process.env.API_URL
+  const gateIP2 = process.env.API_URL2
   const gateUsername = process.env.API_USERNAME
   const gatePassword = process.env.API_PASSWORD
 
-  if (!gateIP || !gateUsername || !gatePassword) {
+  if (!gateIP ||!gateIP2 || !gateUsername || !gatePassword) {
     throw new Error('Missing required environment variables for gate seeding.');
   }
 
@@ -37,9 +38,21 @@ async function main() {
       direction: 'OUT'
     },
   })
+  const gate3 = await prisma.gate.create({
+    data: {
+      device_id: '3',
+      name: 'Main Entrance Gate-2',
+      ip_address: gateIP2,
+      username: gateUsername,
+      password: gatePassword,
+      direction: 'OUT'
+    },
+  })
 
-  console.log(`Created gate: ${gate1.name} (ID: ${gate1.id})`)
-  console.log(`Created gate: ${gate2.name} (ID: ${gate2.id})`)
+  // console.log(`Created gate: ${gate1.name} (ID: ${gate1.id})`)
+  // console.log(`Created gate: ${gate2.name} (ID: ${gate2.id})`)
+  console.log(`Created gate: ${gate3.name} (ID: ${gate3.id})`)
+  
   
   console.log('Seeding finished.')
 }
