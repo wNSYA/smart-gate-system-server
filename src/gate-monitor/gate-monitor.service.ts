@@ -5,7 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import type { Cache } from 'cache-manager';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeviceApiService } from '../shared/device-api/device-api.service';
-import { SocketGateway } from '../socket/socket.gateway'; // <-- Import the gateway
+import { SocketGateway } from '../socket/socket.gateway'; 
 
 @Injectable()
 export class GateMonitorService implements OnModuleInit {
@@ -30,6 +30,46 @@ export class GateMonitorService implements OnModuleInit {
     return cachedData || [];
   }
 
+  // --- NEW: Infinite Scroll for Gate Logs (Open/Close Events & Remote Commands) ---
+  async getGateLogsScroll(limit: number = 50, cursorId?: string) {
+    const records = await this.prisma.access_record.findMany({
+      where: {
+        minor: { 
+          in: [
+            21,   // Gate Open (Physical/Normal)
+            22,   // Gate Closed (Physical/Normal)
+            1024, // 0x400 - Door Remotely Open
+            1025, // 0x401 - Door Remotely Closed
+            1026, // 0x402 - Remain Open Remotely
+            1027  // 0x403 - Remain Closed Remotely
+          ] 
+        } 
+      },
+      take: limit,
+      skip: cursorId ? 1 : 0, 
+      cursor: cursorId ? { serialNo: cursorId } : undefined,
+      include: { 
+        gate: true, 
+        person: true 
+      },
+      orderBy: { time: 'desc' }
+    });
+
+    let nextCursor: string | null = null;
+    if (records.length === limit) {
+      nextCursor = records[records.length - 1].serialNo;
+    }
+
+    return {
+      data: records,
+      meta: {
+        next_cursor: nextCursor,
+        has_more: nextCursor !== null,
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+
   // The Background Worker
   @Cron(CronExpression.EVERY_10_SECONDS)
   private async refreshGateStatuses() {
@@ -38,6 +78,16 @@ export class GateMonitorService implements OnModuleInit {
     const statusPromises = gates.map(async (gate) => {
       let displayStatus = 'OFFLINE'; 
       let isOnline = false;
+
+      if (!gate.ip_address || !gate.username || !gate.password) {
+        return {
+          id: gate.id,
+          device_id: gate.device_id,
+          name: gate.name,
+          isOnline: false,
+          displayStatus: 'CONFIG ERROR',
+        };
+      }
 
       try {
         const response = await this.deviceApi.sendCommand(
@@ -69,6 +119,8 @@ export class GateMonitorService implements OnModuleInit {
         name: gate.name,
         isOnline: isOnline,
         displayStatus: displayStatus,
+        lastSyncedAt: gate.last_synced_at,
+        direction: gate.direction,
       };
     });
 

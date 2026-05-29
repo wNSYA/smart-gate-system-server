@@ -26,8 +26,13 @@ model person {
   // Field Tambahan untuk ERD Mustering
   last_synced_at  DateTime    @default(now())
 
+  // Visual Verification
+  photo_path      String?     @db.VarChar(255)
+
   // Relasi ke Log
   access_records  access_record[]
+
+  visits          visit[]
 }
 
 // 2. Gate (Sesuai ERD)
@@ -40,6 +45,11 @@ model gate {
   ip_address      String     @db.VarChar(64)
   username        String     @db.VarChar(64)
   password        String     @db.VarChar(128)
+
+  direction      GateDirection   @default(IN)
+
+  // Heartbeat / Sync Status
+  last_synced_at  DateTime?
 
   access_records  access_record[]
 }
@@ -58,6 +68,12 @@ model access_record {
   gate_id            String?
   gate               gate?       @relation(fields: [gate_id], references: [id])
 
+  // Visual Verification
+  snapshot_path      String?     @db.VarChar(255)
+
+  // for processing (ETL)
+  is_processed Boolean   @default(false)
+
   @@index([time])
   @@index([person_id])
 }
@@ -69,6 +85,30 @@ model account {
   username        String      @unique @db.VarChar(64)
   password        String      @db.VarChar(255)
   createdAt       DateTime    @default(now())
+}
+
+// 5. The Status/Visit Table
+model visit {
+  id                  String      @id @default(uuid())
+  person_id           String      @db.VarChar(32)
+  person              person      @relation(fields: [person_id], references: [employeeNo])
+
+  entry_time          DateTime? 
+  entry_snapshot_path String?     @db.VarChar(255)
+
+  exit_time           DateTime? 
+  exit_snapshot_path  String?     @db.VarChar(255)
+
+  status              VisitStatus @default(ACTIVE)
+
+  @@index([person_id])
+  @@index([exit_time]) 
+}
+
+model SystemConfig {
+  id          String   @id @default("GLOBAL_CONFIG")
+  isEmergency Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
 }
 
 // --- Enums (Strictly ISAPI Compatible) ---
@@ -83,4 +123,17 @@ enum Gender {
   male
   female
   unknown
+}
+
+enum GateDirection {
+  IN
+  OUT
+}
+
+enum VisitStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED_SYSTEM
+  EMERGENCY   // Indicates an active emergency, person is still in the building/unaccounted for
+  EVACUATED   // Indicates the person has been found or safely evacuated
 }

@@ -1,24 +1,36 @@
-// src/cron/cron.service.ts
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { SocketGateway } from '../socket/socket.gateway';
 import { DeviceApiService } from '../shared/device-api/device-api.service';
-import * as crypto from 'crypto';
 import dayjs from 'dayjs';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class CronService {
   private readonly logger = new Logger(CronService.name);
+  
+  // Define separated directories (Keeping the original path for anomalies to prevent breaking other systems)
+  private readonly snapshotAnomalyDir = path.join(process.cwd(), 'uploads', 'snapshots');
+  private readonly snapshotSuccessDir = path.join(process.cwd(), 'uploads', 'success');
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly socketGateway: SocketGateway,
     private readonly deviceApi: DeviceApiService,
-  ) {}
+  ) {
+    // Create both directories if they do not exist
+    if (!fs.existsSync(this.snapshotAnomalyDir)) {
+      fs.mkdirSync(this.snapshotAnomalyDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.snapshotSuccessDir)) {
+      fs.mkdirSync(this.snapshotSuccessDir, { recursive: true });
+    }
+  }
 
   // ====================================================================
   // 1. ACCESS RECORD SYNC (Runs every 10 seconds)
@@ -29,7 +41,6 @@ export class CronService {
     const startTimeStr = now.subtract(5, 'minute').format('YYYY-MM-DDTHH:mm:ss+07:00');
     const endTimeStr = now.format('YYYY-MM-DDTHH:mm:ss+07:00');
 
-    // 1. Fetch all gates that have connection credentials set up
     const gates = await this.prisma.gate.findMany({
       where: {
         ip_address: { not: '' },
@@ -43,16 +54,14 @@ export class CronService {
       return;
     }
 
-    // 2. Map each gate to a sync promise so they can run concurrently
+    this.logger.log(`[Event Sync] Starting sync for ${gates.length} gate(s)...`);
+
     const syncPromises = gates.map((gate) => {
       const sessionSearchID = "sync_" + randomUUID();
 
       const eventTask = {
         route: '/ISAPI/AccessControl/AcsEvent', 
-        params: { format: 'json',
-            // security: 1, 
-            // iv: iv 
-         },
+        params: { format: 'json' },
         data: {
           AcsEventCond: {
             searchID: sessionSearchID,
@@ -67,22 +76,14 @@ export class CronService {
         },
         syncType: 'access_record',
         dataPath: 'AcsEvent.InfoList',
-        gateId: gate.id // Pass the gate ID down for database linking
+        gateId: gate.id,
+        searchId: sessionSearchID
       };
 
-      // Pass the gate object down to use its specific IP and credentials
       return this.processSingleTask(eventTask, gate);
     });
 
-    // 3. Execute all gate syncs concurrently
-    const results = await Promise.allSettled(syncPromises);
-
-    // Optional: Log any specific gate failures without breaking the whole cron job
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        this.logger.error(`Gate [${gates[index].name}] sync failed: ${result.reason}`);
-      }
-    });
+    await Promise.allSettled(syncPromises);
   }
 
   // ====================================================================
@@ -90,15 +91,12 @@ export class CronService {
   // ====================================================================
   @Cron(CronExpression.EVERY_MINUTE)
   async handlePersonSync() {
+    this.logger.log('[Person Sync] Starting periodic person synchronization...');
     const sessionSearchID = "sync_" + randomUUID();
-    // const iv = this.configService.getOrThrow<string>('IV_HEX');
 
     const personTask = {
       route: '/ISAPI/AccessControl/UserInfo/Search', 
-      params: { format: 'json',
-        // security: 1, 
-        // iv: iv 
-       },
+      params: { format: 'json' },
       data: {
         UserInfoSearchCond: {
           searchID: sessionSearchID,
@@ -110,21 +108,20 @@ export class CronService {
       dataPath: 'UserInfoSearch.UserInfo'
     };
 
-    // No gate passed here, so it falls back to .env credentials
     await this.processSingleTask(personTask);
   }
 
   // ====================================================================
-  // 3. MIDNIGHT RESET SIGNAL (Runs at 00:00 every day)
+  // 3. MIDNIGHT RESET SIGNAL
   // ====================================================================
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleMidnightReset() {
-    this.logger.log('Midnight reached. Sending reset signal to clients.');
+    this.logger.log('--- Midnight reached. Triggering UI reset signal. ---');
     this.socketGateway.emitEventUpdate({ type: 'MIDNIGHT_RESET' });
   }
 
   // ====================================================================
-  // PROCESSING ENGINE
+  // ENGINE: CORE PROCESSING
   // ====================================================================
   private async processSingleTask(task: any, gate?: any) {
     const identifier = gate ? gate.name : 'System';
@@ -140,7 +137,6 @@ export class CronService {
           task.data[payloadRootKey].searchResultPosition = currentPosition;
         }
 
-        // Pass the gate object to executeDigestTask
         const result = await this.executeDigestTask(task.route, task.params, task.data, gate);
         const items = task.dataPath.split('.').reduce((obj: any, key: string) => obj?.[key], result);
 
@@ -160,18 +156,25 @@ export class CronService {
       }
 
       if (allFetchedItems.length > 0) {
-        await this.saveToDatabase(task.syncType, allFetchedItems, task.gateId);
+        this.logger.log(`[${task.syncType} - ${identifier}] Fetched ${allFetchedItems.length} items. Saving to DB...`);
+        await this.saveToDatabase(task.syncType, allFetchedItems, task.gateId, gate, task.searchId);
       } else {
-        this.logger.debug(`[${task.syncType} - ${identifier}] No new data found.`);
+        this.logger.debug(`[${task.syncType} - ${identifier}] No new items found.`);
+      }
+
+      if (gate && gate.id) {
+        await this.prisma.gate.update({
+          where: { id: gate.id },
+          data: { last_synced_at: new Date() }
+        });
       }
       
     } catch (error: any) {
-      this.logger.error(`[${task.syncType} - ${identifier}] Sync fail: ${error.response?.status || error.message}`);
-      throw error; // Rethrow so Promise.allSettled marks it as rejected
+      this.logger.error(`[${task.syncType} - ${identifier}] Task fail: ${error.message}`);
     }
   }
 
-  private async saveToDatabase(syncType: string, fetchedItems: any[], gateId?: string) {
+  private async saveToDatabase(syncType: string, fetchedItems: any[], gateId?: string, gateObj?: any, searchId?: string) {
     const syncStartTime = new Date();
 
     try {
@@ -180,16 +183,11 @@ export class CronService {
         this.socketGateway.emitEmployeeUpdate({ count: fetchedItems.length }); 
       } 
       else if (syncType === 'access_record') {
-        // Pass gateId down to link the records correctly
-        await this.syncAccessRecords(fetchedItems, gateId);
+        await this.syncAccessRecords(fetchedItems, gateId, gateObj, searchId);
         this.socketGateway.emitEventUpdate({ count: fetchedItems.length }); 
       } 
-      else {
-        this.logger.warn(`Unknown syncType: ${syncType}`);
-      }
     } catch (error) {
-      this.logger.error(`[${syncType}] DB save fail:`, error);
-      throw error; 
+      this.logger.error(`[${syncType}] Database operation fail:`, error);
     }
   }
 
@@ -197,6 +195,7 @@ export class CronService {
   // 1. PERSON SYNC (Mark & Sweep Strategy)
   // ====================================================================
   private async syncPeople(items: any[], syncStartTime: Date) {
+    // 1. UPSERT
     await this.prisma.$transaction(
       items.map((item) => {
         const mappedData = {
@@ -217,65 +216,127 @@ export class CronService {
       })
     );
 
+    // 2. SWEEP (Safe deletion: only if no attendance history exists)
     const { count: deletedCount } = await this.prisma.person.deleteMany({
-      where: { last_synced_at: { lt: syncStartTime } },
+      where: { 
+        last_synced_at: { lt: syncStartTime },
+        access_records: { none: {} },
+        visits: { none: {} }
+      },
     });
 
-    this.logger.log(`[Person Sync] ${items.length} upserted, ${deletedCount} removed.`);
+    this.logger.log(`[Person Sync] DONE. ${items.length} items upserted, ${deletedCount} removed (Sweep).`);
   }
 
   // ====================================================================
-  // 2. ACCESS RECORD SYNC (Append/Upsert Only)
+  // 2. ACCESS RECORD SYNC (Safe FK Handling + Snapshot Routing)
   // ====================================================================
-  private async syncAccessRecords(items: any[], gateId?: string) {
-    await this.prisma.$transaction(
-      items.map((item) => {
-        const mappedData = {
-          major: item.major,
-          minor: item.minor,
-          time: new Date(item.time),
-          person_id: item.employeeNoString || null, 
-          gate_id: gateId || null // Now dynamically assigned based on which gate fetched it
-        };
+// ====================================================================
+  // 2. ACCESS RECORD SYNC (Safe FK Handling + Snapshot Routing)
+  // ====================================================================
+  private async syncAccessRecords(items: any[], gateId?: string, gateObj?: any, searchId?: string) {
+    let downloadCount = 0;
+    const successMinorCodes = [1, 38, 75]; 
+    const knownPersons = new Set<string>();
+    
+    // Gate minors we want to show on the live Gate Logs dashboard
+    const gateLogMinors = [21, 22, 1024, 1025, 1026, 1027]; 
 
-        const serialNoString = String(item.serialNo);
-
-        return this.prisma.access_record.upsert({
-          where: { serialNo: serialNoString }, 
-          update: mappedData,
-          create: { serialNo: serialNoString, ...mappedData },
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const serialNoString = String(item.serialNo);
+      const isAnomaly = !successMinorCodes.includes(item.minor);
+      const personId = item.employeeNoString || null;
+      
+      // A. ENSURE PERSON EXISTS (Avoid P2003 Foreign Key Error)
+      if (personId && !knownPersons.has(personId)) {
+        await this.prisma.person.upsert({
+          where: { employeeNo: personId },
+          update: {}, 
+          create: {
+            employeeNo: personId,
+            name: item.name || 'Unknown Sync',
+            userType: 'normal'
+          }
         });
-      })
-    );
+        knownPersons.add(personId);
+      }
 
-    this.logger.log(`[Access Record Sync] ${items.length} upserted for Gate ID: ${gateId}`);
+      const mappedData: any = {
+        major: item.major,
+        minor: item.minor,
+        time: new Date(item.time),
+        person_id: personId, 
+        gate_id: gateId || null
+      };
+
+      // B. DOWNLOAD SNAPSHOT (For Both Anomaly and Success)
+      if ((item.picPresent || item.isPicRetrieved || item.pictureURL) && gateObj && searchId) {
+        const targetDir = isAnomaly ? this.snapshotAnomalyDir : this.snapshotSuccessDir;
+        const urlPrefix = isAnomaly ? '/uploads/snapshots' : '/uploads/success';
+
+        const snapshotFilename = `snap_${serialNoString}.jpg`;
+        const snapshotPath = path.join(targetDir, snapshotFilename);
+
+        if (!fs.existsSync(snapshotPath)) {
+          try {
+            const picNum = i + 1;
+            let picUrl = `/ISAPI/AccessControl/AcsEvent/picture?format=json&searchID=${searchId}&picNum=${picNum}`;
+            
+            if (typeof item.pictureURL === 'string' && item.pictureURL.length > 5) {
+                if (item.pictureURL.startsWith('http')) {
+                   const urlObj = new URL(item.pictureURL);
+                   picUrl = urlObj.pathname + urlObj.search;
+                } else {
+                   picUrl = item.pictureURL;
+                }
+            }
+
+            const picBuffer = await this.deviceApi.downloadBinary(gateObj.ip_address, picUrl, gateObj.username, gateObj.password);
+
+            if (picBuffer && picBuffer.length > 500) {
+              fs.writeFileSync(snapshotPath, picBuffer);
+              mappedData.snapshot_path = `${urlPrefix}/${snapshotFilename}`;
+              downloadCount++;
+            }
+          } catch (err: any) {
+            this.logger.debug(`[Snapshot] Fail for ${serialNoString}: ${err.message}`);
+          }
+        }
+      }
+
+      // C. SAVE ACCESS RECORD
+      const savedRecord = await this.prisma.access_record.upsert({
+        where: { serialNo: serialNoString },
+        update: mappedData,
+        create: { serialNo: serialNoString, ...mappedData },
+        // IMPORTANT: Include relationships so the frontend has the gate name & person name
+        include: { gate: true, person: true } 
+      });
+
+      // D. NEW: WEBSOCKET BROADCAST FOR GATE LOGS
+      if (gateLogMinors.includes(savedRecord.minor)) {
+        if (typeof this.socketGateway.emitNewGateLog === 'function') {
+          this.socketGateway.emitNewGateLog(savedRecord);
+        }
+      }
+    }
+
+    this.logger.log(`[Access Record Sync] DONE. ${items.length} records processed, ${downloadCount} snapshots retrieved for Gate: ${gateObj?.name}`);
   }
 
-  // ====================================================================
-  // API WRAPPER
-  // ====================================================================
   async executeDigestTask(route: string, params?: any, data?: any, gate?: any) {
-    // If a gate is passed, use its credentials. Otherwise, fallback to .env for system-wide syncs (like person)
     const baseUrl = gate?.ip_address || this.configService.get<string>('API_URL');
     const username = gate?.username || this.configService.get<string>('API_USERNAME');
     const password = gate?.password || this.configService.get<string>('API_PASSWORD');
-    const method = 'POST';
-
+    
     if (!baseUrl || !username || !password) {
-      throw new HttpException('Missing API configuration or Gate credentials', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException('Missing API configuration', HttpStatus.INTERNAL_SERVER_ERROR);
     }
-
 
     const queryString = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
     const routeWithParams = `${route}${queryString}`;
 
-    return this.deviceApi.sendCommand(
-      baseUrl,
-      routeWithParams,
-      method,
-      username,
-      password,
-      data || {}
-    );
+    return this.deviceApi.sendCommand(baseUrl, routeWithParams, 'POST', username, password, data || {});
   }
 }

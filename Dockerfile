@@ -1,40 +1,35 @@
 # --- Stage 1: Build ---
-# Use the lightweight Alpine Linux version of Node
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
-# Set the working directory inside the container
+# Install OpenSSL and network tools for Prisma and debugging
+RUN apt-get update && apt-get install -y openssl iputils-ping curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src/app
-
-# Copy only the package files first to cache dependencies
 COPY package*.json ./
-
-# Install ALL dependencies (including devDependencies like TypeScript)
 RUN npm ci
-
-# Copy the rest of the application code
 COPY . .
 
-# Compile the NestJS application from TypeScript to JavaScript
+# Generate Prisma Client (Required for build)
+RUN npx prisma generate
 RUN npm run build
 
-
 # --- Stage 2: Production ---
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 
-# Set the working directory
+# Install OpenSSL and network tools for Prisma and debugging
+RUN apt-get update && apt-get install -y openssl iputils-ping curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src/app
-
-# Copy the package files again
 COPY package*.json ./
+# Install ALL dependencies (including dev tools for seeding)
+RUN npm ci
 
-# Install ONLY production dependencies (keeps the image small)
-RUN npm ci --omit=dev
-
-# Copy the compiled JavaScript from the 'builder' stage
+# Copy build artifacts, generated Prisma client, migrations, and config
 COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/prisma ./prisma
+COPY --from=builder /usr/src/app/tsconfig.json ./tsconfig.json
+COPY --from=builder /usr/src/app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /usr/src/app/node_modules/@prisma/client ./node_modules/@prisma/client
 
-# Expose the port your NestJS app runs on
-EXPOSE 3000
-
-# Start the application using the compiled JavaScript
-CMD ["node", "dist/main"]
+EXPOSE 3001
+CMD ["node", "dist/src/main"]

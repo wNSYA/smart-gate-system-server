@@ -6,10 +6,15 @@ import { CronModule } from './cron/cron.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { StatisticsModule } from './statistics/statistics.module';
+import { EmployeeStatsModule } from './stats-employee/stats-employee.module';
+import { VisitorStatsModule } from './stats-visitor/stats-visitor.module';
 import { SocketModule } from './socket/socket.module';
 import { DeviceApiModule } from './shared/device-api/device-api.module';
 import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
+import { EtlModule } from './etl/etl.module';
+import { VisitsModule } from './visits/visits.module';
+import { DoorControlModule } from './door-control/door-control.module';
+import { EmployeesModule } from './employees/employees.module';
 
 @Module({
   imports: [
@@ -18,10 +23,15 @@ import { GateMonitorModule } from './gate-monitor/gate-monitor.module';
     PrismaModule, 
     AuthModule,
     CronModule,
-    StatisticsModule,
+    EmployeeStatsModule,
+    VisitorStatsModule,
     SocketModule,
     DeviceApiModule,
-    GateMonitorModule
+    GateMonitorModule,
+    EtlModule,
+    VisitsModule,
+    DoorControlModule,
+    EmployeesModule
   ],
   controllers: [AppController],
   providers: [AppService],

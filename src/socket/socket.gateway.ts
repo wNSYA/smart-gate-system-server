@@ -6,6 +6,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 
@@ -18,7 +19,9 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   @WebSocketServer() server!: Server;
   private logger: Logger = new Logger('SocketGateway');
 
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   // 1. Intercept the connection BEFORE it completes
   afterInit(server: Server) {
@@ -52,10 +55,24 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   }
 
   // 2. This now ONLY fires if the middleware called next()
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     // We safely assume client.data.user exists here because the middleware passed
     const username = client.data.user?.username || 'Unknown';
     this.logger.log(`Client connected: ${client.id} (User: ${username})`);
+
+    // 1. Get or create the global config
+    let config = await this.prisma.systemConfig.findUnique({
+      where: { id: 'GLOBAL_CONFIG' },
+    });
+
+    if (!config) {
+      config = await this.prisma.systemConfig.create({
+        data: { id: 'GLOBAL_CONFIG', isEmergency: false },
+      });
+    }
+
+    // 2. Emit the current state ONLY to the newly connected user
+    client.emit('system_state', { isEmergency: config.isEmergency });
   }
 
   handleDisconnect(client: Socket) {
@@ -74,5 +91,33 @@ export class SocketGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
   emitGateStatusUpdate(data: any) {
     this.server.emit('gate_status_updated', data);
+  }
+
+  emitAlert(data: any) {
+    this.server.emit('access_alert', data);
+  }
+
+  emitVisitUpdate(data: any) {
+    this.server.emit('new_visit', data); 
+  }
+
+  emitVisitStatusChanged(data: any) {
+    this.server.emit('visit_status_changed', data);
+  }
+
+  emitBulkVisitUpdate(data: any) {
+    this.server.emit('bulk_visits_updated', data);
+  }
+
+  emitEmergencyResolved(data: any) {
+    this.server.emit('emergency_resolved', data);
+  }
+
+  emitEmergencyState(isEmergency: boolean) {
+    this.server.emit('system_state', { isEmergency });
+  }
+
+  emitNewGateLog(data: any) {
+    this.server.emit('new_gate_log', data);
   }
 }

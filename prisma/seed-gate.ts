@@ -17,22 +17,24 @@ async function main() {
   // TypeScript now knows these are strictly 'string' types
   const gate1 = await prisma.gate.create({
     data: {
-      device_id: 'DEVICE-001',
+      device_id: '1',
       name: 'Main Entrance Gate',
       ip_address: gateIP,
       username: gateUsername,
       password: gatePassword,
+      direction: 'IN'
     },
   })
 
   // Data 2
   const gate2 = await prisma.gate.create({
     data: {
-      device_id: 'DEVICE-002',
+      device_id: '2',
       name: 'Basement Parking Gate',
       ip_address: '192.168.1.102',
       username: 'admin',
       password: 'supersecretpassword2',
+      direction: 'OUT'
     },
   })
 
