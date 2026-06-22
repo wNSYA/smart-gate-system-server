@@ -105,6 +105,12 @@ model visit {
   @@index([exit_time]) 
 }
 
+model SystemConfig {
+  id          String   @id @default("GLOBAL_CONFIG")
+  isEmergency Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}
+
 // --- Enums (Strictly ISAPI Compatible) ---
 
 enum UserType {
