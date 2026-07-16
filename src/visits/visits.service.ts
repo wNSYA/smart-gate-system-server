@@ -63,11 +63,11 @@ export class VisitsService {
     return updatedVisit;
   }
 
-  /**
-   * 2. Trigger a Site-Wide Emergency
-   * Moves all ACTIVE visitors to EMERGENCY status.
+/**
+   * Trigger a Site-Wide Emergency
+   * Moves all ACTIVE visitors to EMERGENCY status and opens all gates.
    */
-async triggerSiteEmergency() {
+  public async triggerSiteEmergency() {
     await this.prisma.$transaction([
       this.prisma.visit.updateMany({
         where: { status: 'ACTIVE' },
@@ -81,6 +81,7 @@ async triggerSiteEmergency() {
     ]);
 
     // 1. Physically unlock all doors via ISAPI asynchronously
+    // Fire-and-forget so it doesn't block the HTTP response
     this.openAllGatesSafely();
 
     const emergencyVisits = await this.prisma.visit.findMany({
@@ -98,7 +99,11 @@ async triggerSiteEmergency() {
     };
   }
 
-  async resolveSiteEmergency() {
+  /**
+   * Resolve a Site-Wide Emergency
+   * Restores statuses and returns doors to their standard locked state.
+   */
+  public async resolveSiteEmergency() {
     await this.prisma.$transaction([
       this.prisma.visit.updateMany({
         where: { status: 'EVACUATED' },
@@ -116,6 +121,7 @@ async triggerSiteEmergency() {
     ]);
 
     // 1. Physically lock doors / return to normal via ISAPI
+    // Fire-and-forget
     this.closeAllGatesSafely();
 
     this.socketGateway.emitEmergencyResolved({
@@ -132,7 +138,7 @@ async triggerSiteEmergency() {
 
   // --- Non-Blocking Hardware Orchestration ---
 
-  private async openAllGatesSafely() {
+  private async openAllGatesSafely(): Promise<void> {
     try {
       // Hikvision standard for fire alarms/emergencies
       await this.doorControlService.controlAllDoors('alwaysOpen'); 
@@ -143,7 +149,7 @@ async triggerSiteEmergency() {
     }
   }
 
-  private async closeAllGatesSafely() {
+  private async closeAllGatesSafely(): Promise<void> {
     try {
       // Returns them to their standard locked state (card swipe required)
       await this.doorControlService.controlAllDoors('close'); 

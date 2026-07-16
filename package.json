@@ -18,8 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed:gate": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-gate.ts",
-    "seed:account": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-account.ts",
+    "seed:gate": "npx ts-node prisma/seed-gate.ts",
+    "seed:account": "npx ts-node prisma/seed-account.ts",
     "seed:visitor": "npx ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed-visitor.ts"
   },
   "dependencies": {
